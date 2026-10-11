@@ -145,6 +145,11 @@ Dead as Disco:
         wait_for(lambda: seen("a", "GOAL COMPLETE"), "goal")
         wait_for(lambda: seen("server", "has completed their goal"), "server saw goal")
         print("PASS wave + kill events send checks and the goal")
+        messages = lambda game: [c.get("text", "") for c in game.commands_seen if c["type"] == "message"]
+        wait_for(lambda: any("GOAL COMPLETE" in m for m in messages(game_a)), "goal pop-up")
+        wait_for(lambda: any(m.startswith(("You found your", "You sent")) for m in messages(game_a)), "item pop-up")
+        wait_for(lambda: any(" sent you " in m for m in messages(game_b)), "friend's item pop-up")
+        print("PASS pop-up messages for items and the goal")
 
         # DeathLink: A dies -> (100%) sent -> B in run -> B killed -> B doesn't echo it back.
         game_b.in_run = True
@@ -152,6 +157,7 @@ Dead as Disco:
         game_a.emit(type="death")
         wait_for(lambda: any(c["type"] == "kill" for c in game_b.commands_seen), "B told to die")
         wait_for(lambda: seen("b", "this death is not sent on"), "B doesn't echo")
+        wait_for(lambda: any("takes you down" in c.get("text", "") for c in game_b.commands_seen), "DeathLink pop-up")
         time.sleep(2)
         assert not any(c["type"] == "kill" for c in game_a.commands_seen), "DeathLink echoed back to A"
         print("PASS DeathLink sends, kills the receiver in a run, and doesn't echo")

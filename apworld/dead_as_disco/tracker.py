@@ -67,6 +67,7 @@ class Tracker:
     rng: random.Random = field(default_factory=random.Random)
     clock: Callable[[], float] = time.time
     log: Callable[[str], None] = print
+    notify: Callable[[str], None] = lambda text: None  # on-screen pop-up in the game
 
     state: SavedState = field(init=False)
     received: list[str] = field(init=False, default_factory=list)
@@ -154,6 +155,7 @@ class Tracker:
             elif cleared == self.settings.goal_wave:
                 missing = self.settings.gold_records_required - self.gold_records
                 self.log(f"Wave {cleared} cleared, but you still need {missing} more Gold Record(s) for the goal.")
+                self.notify(f"Goal wave cleared, but you need {missing} more Gold Record(s)")
         return result
 
     def on_death(self, event: dict[str, Any]) -> bool:
@@ -170,8 +172,10 @@ class Tracker:
         chance = self.settings.death_link_send_chance
         if roll < chance:
             self.log(f"You died. DeathLink roll {roll} < {chance}: sending your death to everyone!")
+            self.notify("Your death was sent to everyone!")
             return True
         self.log(f"You died. DeathLink roll {roll} >= {chance}: your friends are spared this time.")
+        self.notify("You died, but your friends are spared")
         return False
 
     def on_incoming_deathlink(self, source: str, in_run: bool) -> bool:
@@ -183,14 +187,17 @@ class Tracker:
         chance = self.settings.death_link_receive_chance
         if roll >= chance:
             self.log(f"DeathLink from {source}: roll {roll} >= {chance}, you survive!")
+            self.notify(f"{source} died. You survive!")
             return False
         if self.shields_available > 0:
             self.state.shields_used += 1
             self.save()
             self.log(f"DeathLink from {source}: roll {roll} < {chance}, but your Mirror Ball Shield "
                      f"blocked it! ({self.shields_available} left)")
+            self.notify(f"Mirror Ball Shield blocked {source}'s DeathLink!")
             return False
         self.log(f"DeathLink from {source}: roll {roll} < {chance}. Down you go!")
+        self.notify(f"{source} died and takes you down with them!")
         self.deathlink_kill_at = self.clock()
         return True
 

@@ -4,7 +4,7 @@
 -- %LOCALAPPDATA%\DeadAsDiscoAP, and applies traps, buffs and DeathLink kills it asks for.
 -- Debug hotkeys (work during a run, no client needed):
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
---   Ctrl+F9 disco fever  Ctrl+F10 test kill  Ctrl+F11 write a status line to the log
+--   Ctrl+F9 disco fever  Ctrl+F10 test kill  Ctrl+F11 status line (log + pop-up)
 
 local VERSION = "0.1.0"
 
@@ -248,6 +248,15 @@ end
 ---------------------------------------------------------------------------------------------
 
 local active_effect = nil -- {key, command_id, ends_at, revert}
+local popup -- defined with the pop-ups below
+
+local EFFECT_POPUPS = {
+    slowmo = "SLOW-MO! Everything slows down",
+    fastforward = "FAST-FORWARD! Everything speeds up",
+    molasses = "MOLASSES! You're stuck in slow motion",
+    blackout = "BLACKOUT!",
+    fever = "DISCO FEVER! Enemies slowed",
+}
 
 local function world_context()
     local p = player()
@@ -337,6 +346,7 @@ local function start_effect(key, duration, command_id)
     duration = math.max(1, math.min(tonumber(duration) or 15, 120))
     active_effect = {key = key, command_id = command_id, ends_at = os.time() + duration, revert = definition.revert}
     emit({type = "effect_start", effect = key, command_id = command_id, value = tostring(result), duration = duration})
+    popup(EFFECT_POPUPS[key] .. " (" .. duration .. "s)")
     log("effect " .. key .. " on for " .. duration .. "s (value " .. tostring(result) .. ")")
 end
 
@@ -494,6 +504,102 @@ local function register_hooks()
 end
 
 ---------------------------------------------------------------------------------------------
+-- On-screen pop-ups
+---------------------------------------------------------------------------------------------
+
+-- The engine's UserWidget class is abstract (constructing it crashes), so a small concrete widget from
+-- the game hosts ours: its widget tree gets replaced by a canvas holding one multi-line TextBlock.
+local POPUP_HOSTS = {
+    "/Game/Pagoda/UI/LevelSelect/WBP_LevelSelectLabelText.WBP_LevelSelectLabelText_C",
+    "/Game/Pagoda/UI/Game/SongText/TextTemplates/WBP_SongText_Base.WBP_SongText_Base_C",
+    "/Game/Pagoda/UI/Common/WBP_Star_WithCountText.WBP_Star_WithCountText_C",
+}
+local POPUP_SECONDS = 6
+local POPUP_MAX_LINES = 5
+local POPUP_FONT_SIZE = 26
+local POPUP_POSITION = {X = 0.5, Y = 0.16} -- fraction of the screen; the text hangs down from here
+
+local popup_lines = {} -- {text, expires}
+local popup_overlay = nil -- {widget, text}
+local popup_failures = 0
+local popup_shown_text = nil
+
+local function create_overlay()
+    local pc = controller()
+    if not valid(pc) then error("player controller not found") end
+    local library = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if not valid(library) then error("widget library not found") end
+    local widget, host_errors = nil, {}
+    for _, path in ipairs(POPUP_HOSTS) do
+        local ok, result = pcall(function() return library:Create(pc, load_class(path), pc) end)
+        if ok and valid(result) then widget = result break end
+        host_errors[#host_errors + 1] = path:match("([^/]+)$") .. ": " .. tostring(result)
+    end
+    if not widget then error("no host widget: " .. table.concat(host_errors, "; ")) end
+
+    local tree = widget.WidgetTree
+    if not valid(tree) then error("host widget has no widget tree") end
+    local canvas = StaticConstructObject(StaticFindObject("/Script/UMG.CanvasPanel"), tree, FName("DeadAsDiscoAPCanvas"))
+    local text = StaticConstructObject(StaticFindObject("/Script/UMG.TextBlock"), tree, FName("DeadAsDiscoAPText"))
+    if not valid(canvas) or not valid(text) then error("could not construct canvas/text") end
+    tree.RootWidget = canvas
+    local slot = canvas:AddChildToCanvas(text)
+    slot:SetAnchors({Minimum = POPUP_POSITION, Maximum = POPUP_POSITION})
+    slot:SetAlignment({X = 0.5, Y = 0.0})
+    slot:SetAutoSize(true)
+    text:SetJustification(1) -- centre
+    text:SetShadowOffset({X = 2.0, Y = 2.0})
+    text:SetShadowColorAndOpacity({R = 0.0, G = 0.0, B = 0.0, A = 0.9})
+    pcall(function()
+        local font = text.Font
+        font.Size = POPUP_FONT_SIZE
+        text:SetFont(font)
+    end)
+    text:SetText(FText(""))
+    widget:SetVisibility(3) -- HitTestInvisible: never takes clicks or focus
+    widget:AddToViewport(1000)
+    log("pop-up overlay created on " .. widget:GetClass():GetFullName())
+    return {widget = widget, text = text}
+end
+
+local function refresh_popups()
+    local now = os.time()
+    local kept = {}
+    for _, line in ipairs(popup_lines) do
+        if line.expires > now then kept[#kept + 1] = line end
+    end
+    while #kept > POPUP_MAX_LINES do table.remove(kept, 1) end
+    popup_lines = kept
+    local texts = {}
+    for _, line in ipairs(kept) do texts[#texts + 1] = line.text end
+    local wanted = table.concat(texts, "\n")
+    if wanted == popup_shown_text and popup_overlay and valid(popup_overlay.text) then return end
+    if wanted == "" and not popup_overlay then return end
+    if popup_failures >= 3 then return end -- give up quietly after repeated failures
+    local ok, err = pcall(function()
+        if not popup_overlay or not valid(popup_overlay.widget) or not valid(popup_overlay.text)
+            or not popup_overlay.widget:IsInViewport() then
+            popup_overlay = create_overlay()
+        end
+        popup_overlay.text:SetText(FText(wanted))
+    end)
+    if ok then
+        popup_shown_text = wanted
+    else
+        popup_overlay = nil
+        popup_failures = popup_failures + 1
+        log("pop-up failed (" .. popup_failures .. "/3): " .. tostring(err))
+    end
+end
+
+popup = function(text)
+    text = tostring(text):gsub("[%c]", " ")
+    if #text > 120 then text = text:sub(1, 117) .. "..." end
+    popup_lines[#popup_lines + 1] = {text = text, expires = os.time() + POPUP_SECONDS}
+    refresh_popups()
+end
+
+---------------------------------------------------------------------------------------------
 -- Main loop
 ---------------------------------------------------------------------------------------------
 
@@ -507,6 +613,8 @@ local function handle_command(command)
         start_effect(command.effect, command.duration, command.id)
     elseif command.type == "kill" then
         request_kill(command.source)
+    elseif command.type == "message" then
+        popup(command.text)
     end
 end
 
@@ -566,7 +674,10 @@ local function tick()
     if open_bridge() then
         for _, command in ipairs(read_commands()) do handle_command(command) end
     end
-    if tick_count % STATUS_EVERY_TICKS == 0 then write_status() end
+    if tick_count % STATUS_EVERY_TICKS == 0 then
+        write_status()
+        if #popup_lines > 0 then refresh_popups() end -- expire old lines
+    end
     flush_events()
 end
 
@@ -594,6 +705,9 @@ hotkey(Key.F7, function() start_effect("molasses", 10, "hotkey") end)
 hotkey(Key.F8, function() start_effect("blackout", 10, "hotkey") end)
 hotkey(Key.F9, function() start_effect("fever", 10, "hotkey") end)
 hotkey(Key.F10, function() request_kill("hotkey") end)
-hotkey(Key.F11, function() emit_log(status_line()) end)
+hotkey(Key.F11, function()
+    emit_log(status_line())
+    popup("Dead as Disco AP " .. VERSION .. ": " .. (in_run() and ("in a run, wave " .. run.round) or "not in a run"))
+end)
 
 log("Dead as Disco AP " .. VERSION .. " loaded; session " .. session)

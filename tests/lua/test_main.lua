@@ -63,6 +63,42 @@ function RegisterKeyBind(key, _, callback) keybinds[key] = callback end
 Key = {F5 = "F5", F6 = "F6", F7 = "F7", F8 = "F8", F9 = "F9", F10 = "F10", F11 = "F11"}
 ModifierKey = {CONTROL = "CTRL"}
 function FName(text) return {name = text} end
+function FText(text) return {text = text} end
+
+-- Fake UMG: the host widget, its tree, and the canvas/text the mod builds inside it.
+local widgets_created = {}
+local widget_library = object("Default__WidgetBlueprintLibrary")
+function widget_library:Create(_, class)
+    local widget = object("WBP host", {WidgetTree = object("WidgetTree"), class = class, in_viewport = false})
+    function widget:GetClass() return {GetFullName = function() return "class " .. class._name end} end
+    function widget:SetVisibility(v) self.visibility = v end
+    function widget:AddToViewport(z) self.in_viewport = true; self.z = z end
+    function widget:IsInViewport() return self.in_viewport end
+    widgets_created[#widgets_created + 1] = widget
+    return widget
+end
+functions["/Script/UMG.Default__WidgetBlueprintLibrary"] = widget_library
+function StaticConstructObject(class, outer, name)
+    local o = object(name.name, {outer = outer, class = class})
+    if class._name:find("CanvasPanel") then
+        function o:AddChildToCanvas(child)
+            self.child = child
+            local slot = {}
+            function slot:SetAnchors(a) self.anchors = a end
+            function slot:SetAlignment(a) self.alignment = a end
+            function slot:SetAutoSize(b) self.auto = b end
+            return slot
+        end
+    else
+        o.Font = {Size = 24}
+        function o:SetText(t) self.shown = t.text end
+        function o:SetJustification(j) self.justification = j end
+        function o:SetShadowOffset(v) end
+        function o:SetShadowColorAndOpacity(c) end
+        function o:SetFont(f) self.font_size = f.Size end
+    end
+    return o
+end
 
 local statics = object("Default__GameplayStatics", {dilation = 1.0})
 function statics:SetGlobalTimeDilation(_, speed) self.dilation = speed end
@@ -230,6 +266,23 @@ tick(40)
 check(#library.calls == calls_before + 11, "twelve hits in all (got " .. (#library.calls - calls_before + 1) .. ")")
 check(#events_of("kill_failed") == 1, "kill_failed reported when nothing worked")
 charlie.HealthAttributeSet.Health.BaseValue, charlie.HealthAttributeSet.Health.CurrentValue = 100, 100
+
+-- Pop-ups: messages from the client show in one multi-line text, newest last, at most 5 lines.
+command({type = "message", text = "Alex sent you Slow-Mo Trap"})
+tick(1)
+local host = widgets_created[#widgets_created]
+check(host and host.in_viewport and host.visibility == 3, "pop-up overlay added to the viewport, click-through")
+local popup_text = host and host.WidgetTree.RootWidget and host.WidgetTree.RootWidget.child
+check(popup_text and popup_text.shown:match("([^\n]*)$") == "Alex sent you Slow-Mo Trap" and popup_text.font_size == 26,
+    "message shown as the newest pop-up line")
+check(popup_text.shown:find("SLOW-MO!", 1, true) ~= nil, "effects show their own pop-up")
+for i = 1, 6 do command({type = "message", text = "line " .. i}) end
+tick(1)
+check(popup_text.shown == "line 2\nline 3\nline 4\nline 5\nline 6", "only the newest five lines are kept")
+host.in_viewport = false -- e.g. the level changed
+command({type = "message", text = "after level change"})
+tick(1)
+check(#widgets_created == 2 and widgets_created[2].in_viewport, "overlay recreated when it left the viewport")
 
 -- Client restart truncates the command file; ids restart from 1 under a new session.
 local file = io.open(bridge .. "commands.jsonl", "wb")

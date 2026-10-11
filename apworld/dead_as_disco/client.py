@@ -88,7 +88,7 @@ class DeadAsDiscoContext(CommonContext):
         if cmd == "Connected":
             settings = Settings.from_slot_data(args.get("slot_data") or {})
             state_path = self.bridge.directory / "state" / f"{self.seed_name}_{self.team}_{self.slot}.json"
-            self.tracker = Tracker(settings, state_path, log=logger.info)
+            self.tracker = Tracker(settings, state_path, log=logger.info, notify=self.popup)
             self.tracker.set_received([item.item for item in self.items_received])
             self.last_status_cleared = 0
             Utils.async_start(self.update_death_link(settings.death_link))
@@ -99,6 +99,34 @@ class DeadAsDiscoContext(CommonContext):
                         f"{settings.goal_wave} in one Arcade run. Type /disco for status.")
         elif cmd == "ReceivedItems" and self.tracker:
             self.tracker.set_received([item.item for item in self.items_received])
+
+    def popup(self, text: str) -> None:
+        self.bridge.send({"type": "message", "text": text})
+
+    def on_print_json(self, args: dict[str, Any]) -> None:
+        super().on_print_json(args)
+        if args.get("type") == "ItemSend" and self.slot is not None:
+            message = self.item_message(args)
+            if message:
+                self.popup(message)
+
+    def item_message(self, args: dict[str, Any]) -> Optional[str]:
+        item, receiving = args.get("item"), args.get("receiving")
+        if item is None or receiving is None:
+            return None
+        if isinstance(item, dict):
+            item_id, finder, flags = item.get("item"), item.get("player"), item.get("flags", 0)
+        else:
+            item_id, finder, flags = item.item, item.player, item.flags
+        if self.slot not in (receiving, finder):
+            return None
+        name = self.item_names.lookup_in_slot(item_id, receiving)
+        if receiving == self.slot and finder == self.slot:
+            return f"You found your {name}"
+        if receiving == self.slot:
+            return f"{self.player_names.get(finder, 'Someone')} sent you {name}"
+        important = "!" if flags & 0b001 else ""  # progression items matter most to your friends
+        return f"You sent {name} to {self.player_names.get(receiving, 'someone')}{important}"
 
     def on_deathlink(self, data: dict[str, Any]) -> None:
         super().on_deathlink(data)
@@ -117,6 +145,7 @@ class DeadAsDiscoContext(CommonContext):
             tracker.state.goal_sent = True
             self.finished_game = True
             logger.info("GOAL COMPLETE! You're the Disco champion.")
+            self.popup("GOAL COMPLETE! You're the Disco champion!")
         if result.get("send_death"):
             name = self.player_names.get(self.slot, "Someone")
             await self.send_death(f"{name} got knocked off the dance floor.")
