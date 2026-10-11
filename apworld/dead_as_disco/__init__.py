@@ -12,7 +12,7 @@ from .data import (
     MIRROR_BALL_SHIELD, SLOT_DATA_VERSION, TRAPS, WAVE_LOCATIONS, kill_location_name,
     wave_location_name,
 )
-from .options import DeadAsDiscoOptions
+from .options import OPTION_GROUPS, DeadAsDiscoOptions
 
 
 def launch_client(*args: str) -> None:
@@ -35,6 +35,8 @@ class DeadAsDiscoLocation(Location):
 class DeadAsDiscoWeb(WebWorld):
     theme = "partyTime"
     item_descriptions = ITEM_DESCRIPTIONS
+    option_groups = OPTION_GROUPS
+    rich_text_options_doc = True
     tutorials = [Tutorial(
         "Multiworld Setup Guide",
         "Install the mod and connect Dead as Disco to a multiworld.",

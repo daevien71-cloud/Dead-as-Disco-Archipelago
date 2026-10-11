@@ -1,4 +1,6 @@
 # Dead as Disco player options. Change "name", then give this file to whoever generates the multiworld.
+# Every option is explained in plain words in the Archipelago Launcher's Options Creator (hover an option),
+# and in the "Options explained" section of apworld/dead_as_disco/docs/en_Dead as Disco.md.
 name: YourName
 game: Dead as Disco
 description: Dead as Disco Arcade
@@ -31,3 +33,12 @@ Dead as Disco:
   death_link: true
   death_link_send_chance: 25
   death_link_receive_chance: 40
+
+  # Every Archipelago game has these two. Leave them as they are for Dead as Disco:
+  # accessibility "full" = every check doable and every item findable;
+  # progression_balancing barely matters here because Gold Records are spread out on purpose.
+  accessibility: full
+  progression_balancing: 50
+
+  # Optional: checks you might never reach can be kept free of anything important, e.g.
+  # exclude_locations: ["Arcade - Clear Wave 200", "Arcade - Defeat 5000 Enemies"]

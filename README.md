@@ -17,6 +17,8 @@ See [the setup guide](apworld/dead_as_disco/docs/setup_en.md). Short version: ru
 [`dead_as_disco.apworld`](dead_as_disco.apworld) (top of this repo) to the Archipelago Launcher's
 **Install APWorld**, open **Dead as Disco Client**, play Arcade.
 
+Every option, in plain words: [Options explained](apworld/dead_as_disco/docs/en_Dead%20as%20Disco.md#options-explained).
+
 To update later: `Update.bat` (Windows) or `bash Update-Linux.sh` (Linux), with the game closed.
 
 Only want to play alongside someone else's Dead as Disco? You just need `dead_as_disco.apworld` to generate.
