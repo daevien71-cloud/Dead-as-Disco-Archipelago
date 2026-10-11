@@ -2,11 +2,12 @@
 --
 -- Reports Arcade waves, kills and deaths to the Archipelago client through files in
 -- %LOCALAPPDATA%\DeadAsDiscoAP, and applies traps, buffs and DeathLink kills it asks for.
--- Debug hotkeys (work during a run, no client needed):
+-- Ctrl+F11 shows a status pop-up and log line. With TEST_HOTKEYS on, during a run:
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
---   Ctrl+F9 disco fever  Ctrl+F10 test kill  Ctrl+F11 status line (log + pop-up)
+--   Ctrl+F9 disco fever  Ctrl+F10 kill yourself (a real death: it goes out over DeathLink)
 
 local VERSION = "0.1.0"
+local TEST_HOTKEYS = false -- off for real sessions; the client's /testeffect and /testkill still work
 
 local GAME_STATE_CLASS = "BP_PagodaGameState_InfiniteDisco_C"
 local GAME_STATE = "/Game/Pagoda/Core/GameModes/InfiniteDisco/BP_PagodaGameState_InfiniteDisco.BP_PagodaGameState_InfiniteDisco_C"
@@ -699,12 +700,14 @@ local function hotkey(key, action)
     end)
 end
 
-hotkey(Key.F5, function() start_effect("slowmo", 10, "hotkey") end)
-hotkey(Key.F6, function() start_effect("fastforward", 10, "hotkey") end)
-hotkey(Key.F7, function() start_effect("molasses", 10, "hotkey") end)
-hotkey(Key.F8, function() start_effect("blackout", 10, "hotkey") end)
-hotkey(Key.F9, function() start_effect("fever", 10, "hotkey") end)
-hotkey(Key.F10, function() request_kill("hotkey") end)
+if TEST_HOTKEYS then
+    hotkey(Key.F5, function() start_effect("slowmo", 10, "hotkey") end)
+    hotkey(Key.F6, function() start_effect("fastforward", 10, "hotkey") end)
+    hotkey(Key.F7, function() start_effect("molasses", 10, "hotkey") end)
+    hotkey(Key.F8, function() start_effect("blackout", 10, "hotkey") end)
+    hotkey(Key.F9, function() start_effect("fever", 10, "hotkey") end)
+    hotkey(Key.F10, function() request_kill("hotkey") end)
+end
 hotkey(Key.F11, function()
     emit_log(status_line())
     popup("Dead as Disco AP " .. VERSION .. ": " .. (in_run() and ("in a run, wave " .. run.round) or "not in a run"))

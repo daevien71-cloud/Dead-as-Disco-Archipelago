@@ -160,6 +160,7 @@ check(read_events()[1] and read_events()[1].type == "hello", "hello event writte
 check(hooks[GS .. ":AdvanceRound"] ~= nil, "AdvanceRound hooked")
 check(hooks["/Script/Pagoda.PagodaInfiniteDiscoSubsystem:NotifyEnemyKilled"] ~= nil, "kill hook registered")
 check(hooks[PLAYER .. ":OnDeathStartedDelegate_Event"] ~= nil, "death hook registered")
+check(keybinds.F11 ~= nil and keybinds.F5 == nil and keybinds.F10 == nil, "only the status hotkey is on by default")
 
 -- Start an Arcade run.
 local state = object("BP_PagodaGameState_InfiniteDisco_C /Game/Level.PersistentLevel.GS_1", {round = 0})

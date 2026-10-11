@@ -53,8 +53,15 @@ locally. Your friends' games don't need anything extra.
 
 Keep the client open while you play: kills only count while it's running.
 
-## Testing hotkeys
+## Testing
 
-During an Arcade run, these work without the client: Ctrl+F5 slow-mo, Ctrl+F6 fast-forward,
-Ctrl+F7 molasses, Ctrl+F8 blackout, Ctrl+F9 Disco Fever, Ctrl+F10 test DeathLink kill,
-Ctrl+F11 write a status line to `ue4ss\UE4SS.log`.
+Ctrl+F11 in the game shows a status pop-up (and writes a line to `ue4ss\UE4SS.log`), so you can check the
+mod is running. In the client window:
+
+- `/disco`: Gold Records, kills, shields and queued effects.
+- `/testeffect slowmo` (or fastforward, molasses, blackout, fever): try an effect during a run.
+- `/testdeathlink`: pretend a friend died. Goes to your slot only, then rolls your receive chance like a real one.
+- `/testkill`: die right away. This is a real death, so it can go out to everyone over DeathLink.
+
+The mod also has Ctrl+F5 to F10 test keys for the effects and a kill. They're off by default; set
+`TEST_HOTKEYS = true` near the top of `mod/DeadAsDiscoAP/Scripts/main.lua` (and reinstall) to turn them on.
