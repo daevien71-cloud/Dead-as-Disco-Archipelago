@@ -32,7 +32,8 @@ kill. Still untested live: an incoming DeathLink from another player, long runs 
   `bridge_dir.txt` = `C:\users\steamuser\AppData\Local\DeadAsDiscoAP` and creates that folder in the prefix
   (`steamapps/compatdata/3404260/pfx/drive_c/users/steamuser/AppData/Local`).
 - The native Linux AP client finds the same folder through the prefix (`bridge.proton_local_appdata`).
-- Tested only against a fake Steam tree (`tests/test_install_linux.py`); **not yet run on the real Linux PC.**
+- **Works on the real Kubuntu PC** (2026-10-11): installer, UE4SS under Proton, client found the prefix, checks,
+  traps, Disco Fever and goal reminders all worked with the owner's newer Archipelago.
 - Owner has pak cosmetic mods in `Content/Paks/~mods` on both PCs; installers never touch Content/Paks.
 
 ## What the mod relies on (from the earlier Codex research)

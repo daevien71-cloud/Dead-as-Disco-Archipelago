@@ -216,7 +216,7 @@ check(statics.dilation == 0.65 and math.abs(charlie.CustomTimeDilation - 1 / 0.6
 command({type = "effect", effect = "blackout", duration = 30})
 tick(1)
 check(statics.dilation == 1.0 and charlie.CustomTimeDilation == 1.0, "starting blackout reverts fever")
-check(camera.fades[1] and camera.fades[1][2] == 0.9, "blackout fades camera in")
+check(camera.fades[1] and camera.fades[1][2] == 0.98, "blackout fades camera in to 98%")
 command({type = "effect", effect = "nope"})
 tick(1)
 local failed = events_of("effect_failed")

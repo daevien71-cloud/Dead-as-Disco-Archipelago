@@ -69,5 +69,5 @@ ITEM_DESCRIPTIONS = {
     SLOW_MO_TRAP: "The whole game runs in slow motion for a while. The music does not.",
     FAST_FORWARD_TRAP: "The whole game runs faster for a while. The music does not.",
     MOLASSES_TRAP: "Only you are slowed down for a while.",
-    BLACKOUT_TRAP: "The screen goes almost dark for a while.",
+    BLACKOUT_TRAP: "The screen goes almost completely dark (98%) for a while.",
 }

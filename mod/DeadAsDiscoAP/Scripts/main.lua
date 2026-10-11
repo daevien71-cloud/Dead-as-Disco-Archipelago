@@ -25,7 +25,7 @@ local SLOWMO_SPEED = 0.6
 local FASTFORWARD_SPEED = 1.4
 local MOLASSES_SPEED = 0.6
 local FEVER_WORLD_SPEED = 0.65
-local BLACKOUT_ALPHA = 0.9
+local BLACKOUT_ALPHA = 0.98
 
 local function log(message)
     print("[DeadAsDiscoAP] " .. tostring(message) .. "\n")

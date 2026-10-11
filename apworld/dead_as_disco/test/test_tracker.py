@@ -69,6 +69,12 @@ class TrackerTest(unittest.TestCase):
         t.set_received(ids(GOLD_RECORD))
         self.assertFalse(self.event(t, 1, type="wave", wave=20)["goal"])
         self.assertTrue(any("1 more Gold Record" in line for line in self.logs))
+        # The same clear arrives again from the game's status: no second reminder.
+        t.on_wave(20)
+        self.assertEqual(sum("more Gold Record" in line for line in self.logs), 1)
+        self.clock.now += 60  # a later run reaches the goal wave again: remind again
+        t.on_wave(20)
+        self.assertEqual(sum("more Gold Record" in line for line in self.logs), 2)
         t.set_received(ids(GOLD_RECORD, GOLD_RECORD))
         self.assertFalse(self.event(t, 2, type="wave", wave=19)["goal"])
         self.assertTrue(self.event(t, 3, type="wave", wave=21)["goal"])

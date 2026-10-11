@@ -21,6 +21,7 @@ DEATHLINK_KILL_WINDOW = 15.0
 STALE_DEATH_SECONDS = 20.0
 EFFECT_START_TIMEOUT = 6.0
 EFFECT_GAP_SECONDS = 3.0
+GOAL_HINT_REPEAT_SECONDS = 30.0
 
 
 @dataclass
@@ -74,6 +75,7 @@ class Tracker:
     pending_effect: Optional[PendingEffect] = field(init=False, default=None)
     next_effect_at: float = field(init=False, default=0.0)
     deathlink_kill_at: float = field(init=False, default=-1e9)
+    goal_hint_at: float = field(init=False, default=-1e9)
 
     def __post_init__(self) -> None:
         self.state = SavedState()
@@ -152,7 +154,9 @@ class Tracker:
         if cleared >= self.settings.goal_wave:
             if self.gold_records >= self.settings.gold_records_required:
                 result["goal"] = not self.state.goal_sent
-            elif cleared == self.settings.goal_wave:
+            elif cleared == self.settings.goal_wave and self.clock() - self.goal_hint_at > GOAL_HINT_REPEAT_SECONDS:
+                # The game reports a clear both as an event and in its status, so only remind once per run.
+                self.goal_hint_at = self.clock()
                 missing = self.settings.gold_records_required - self.gold_records
                 self.log(f"Wave {cleared} cleared, but you still need {missing} more Gold Record(s) for the goal.")
                 self.notify(f"Goal wave cleared, but you need {missing} more Gold Record(s)")
