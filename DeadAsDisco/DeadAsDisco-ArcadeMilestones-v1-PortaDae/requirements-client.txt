@@ -1,2 +1,0 @@
-# Same exact version used by the pinned official AP source dependency set.
-websockets==13.1
