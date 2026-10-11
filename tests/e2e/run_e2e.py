@@ -173,6 +173,23 @@ Dead as Disco:
         wait_for(lambda: seen("a", "not in an Arcade run"), "A ignores DeathLink outside a run")
         print("PASS DeathLink ignored outside a run")
 
+        # /testdeathlink reaches only the sender's slot, then rolls (100% in this seed) and kills.
+        game_a.in_run = True
+        time.sleep(1.5)
+        b_kills = sum(c["type"] == "kill" for c in game_b.commands_seen)
+        procs[1].stdin.write("/testdeathlink Robo\n")
+        procs[1].stdin.flush()
+        # A may own Mirror Ball Shields from its own checks, so a block counts as well as a kill.
+        wait_for(lambda: any(c["type"] == "kill" and c.get("source") == "Robo" for c in game_a.commands_seen)
+                 or seen("a", "Shield blocked it"), "test DeathLink kills the sender or hits a shield")
+        wait_for(lambda: any(("Robo died and takes you down" in c.get("text", "")
+                              or "blocked Robo's DeathLink" in c.get("text", "")) for c in game_a.commands_seen),
+                 "test DeathLink pop-up")
+        time.sleep(2)
+        assert sum(c["type"] == "kill" for c in game_b.commands_seen) == b_kills, "test DeathLink reached another slot"
+        assert not seen("b", "Robo"), "test DeathLink showed up in another player's client"
+        print("PASS /testdeathlink goes only to your own slot")
+
         procs[1].stdin.write("/disco\n")
         procs[1].stdin.flush()
         wait_for(lambda: seen("a", "Gold Records: 2/1"), "/disco command")

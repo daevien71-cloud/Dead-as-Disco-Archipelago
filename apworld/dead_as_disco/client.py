@@ -4,6 +4,7 @@ Start it from the Archipelago Launcher ("Dead as Disco Client"), connect, then p
 """
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,6 +19,9 @@ from .data import GAME_NAME
 from .tracker import Settings, Tracker
 
 POLL_SECONDS = 0.25
+# Marks a /testdeathlink packet. It's bounced to your slot only and carries no DeathLink tag, so it can
+# never reach anyone else, even mid-session.
+TEST_DEATHLINK = "dead_as_disco_test_deathlink"
 
 
 class DeadAsDiscoCommandProcessor(ClientCommandProcessor):
@@ -47,6 +51,18 @@ class DeadAsDiscoCommandProcessor(ClientCommandProcessor):
         """Send an effect to the game without using an item: slowmo, fastforward, molasses, blackout, fever."""
         self.ctx.bridge.send({"type": "effect", "effect": effect, "duration": 10, "item": f"Test {effect}"})
         self.output(f"Sent test effect '{effect}' (only applies during a run).")
+        return True
+
+    def _cmd_testdeathlink(self, name: str = "Test Buddy") -> bool:
+        """Pretend a friend died: goes through the server to your slot only, then rolls your receive chance
+        and uses up a Mirror Ball Shield exactly like a real DeathLink. Only bites during a run."""
+        ctx = self.ctx
+        if not ctx.slot or not ctx.tracker:
+            self.output("Connect to a multiworld first.")
+            return False
+        Utils.async_start(ctx.send_msgs([{"cmd": "Bounce", "slots": [ctx.slot], "data": {
+            "time": time.time(), "source": name, "cause": f"{name} slipped on the dance floor.", TEST_DEATHLINK: True}}]))
+        self.output(f"Sent a test DeathLink from {name} to yourself.")
         return True
 
     def _cmd_testkill(self) -> bool:
@@ -105,6 +121,8 @@ class DeadAsDiscoContext(CommonContext):
                                           + self.tracker.locations_for_kills()}))
             logger.info(f"Goal: collect {settings.gold_records_required} Gold Records, then clear wave "
                         f"{settings.goal_wave} in one Arcade run. Type /disco for status.")
+        elif cmd == "Bounced" and (args.get("data") or {}).get(TEST_DEATHLINK):
+            self.on_deathlink(args["data"])
         elif cmd == "ReceivedItems" and self.tracker:
             self.tracker.set_received([item.item for item in self.items_received])
 
