@@ -55,7 +55,7 @@ Keep the client open while you play: kills only count while it's running.
 
 ## Testing
 
-Ctrl+F11 in the game shows a status pop-up (and writes a line to `ue4ss\UE4SS.log`), so you can check the
+Ctrl+Home in the game shows a status pop-up (and writes a line to `ue4ss\UE4SS.log`), so you can check the
 mod is running. In the client window:
 
 - `/disco`: Gold Records, kills, shields and queued effects.

@@ -85,6 +85,8 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
 - When reading bridge files from Claude's tools, delete the stale redirected copy under
   `AppData\Local\Packages\Claude_*\LocalCache\Local\DeadAsDiscoAP` first, or you read old data.
 
+- Incoming DeathLink confirmed in the real game via `/testdeathlink` (2026-10-11). The Pyroette spin fix works
+  (she now stands still). Ctrl+F11 also toggles the game's fullscreen, so the status hotkey is Ctrl+Home.
 - `/testdeathlink [name]` in the client bounces a fake DeathLink to your own slot only (no DeathLink tag,
   `slots=[own]`), so it can't reach friends; the client then rolls/shields/kills like a real one.
 - `Update.bat` / `Update-Linux.sh`: git pull in a clone, otherwise download the branch zip from GitHub (needs
@@ -98,7 +100,7 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
 
 1. Run `Install.bat` (game closed). Start the game; check `...\Win64\ue4ss\UE4SS.log` for
    `[DeadAsDiscoAP] hooked ...` lines (8 expected over time) and no crash.
-2. Start an Arcade run. Press Ctrl+F11: status line should say in_run=true and the wave number.
+2. Start an Arcade run. Press Ctrl+Home: status line should say in_run=true and the wave number.
 3. Try Ctrl+F5..F9 one at a time: slow-mo, fast-forward, molasses, blackout, fever. Note which visibly work.
 4. Get hit by an enemy once: log should say `learned how enemies damage you`. (If not, the damage hook
    isn't seeing hits and DeathLink falls back to other kill methods.)

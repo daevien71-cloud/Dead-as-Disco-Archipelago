@@ -2,7 +2,7 @@
 --
 -- Reports Arcade waves, kills and deaths to the Archipelago client through files in
 -- %LOCALAPPDATA%\DeadAsDiscoAP, and applies traps, buffs and DeathLink kills it asks for.
--- Ctrl+F11 shows a status pop-up and log line. With TEST_HOTKEYS on, during a run:
+-- Ctrl+Home shows a status pop-up and log line (not F11: that toggles the game's fullscreen). With TEST_HOTKEYS on, during a run:
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
 --   Ctrl+F9 disco fever  Ctrl+F10 kill yourself (a real death: it goes out over DeathLink)
 
@@ -708,7 +708,7 @@ if TEST_HOTKEYS then
     hotkey(Key.F9, function() start_effect("fever", 10, "hotkey") end)
     hotkey(Key.F10, function() request_kill("hotkey") end)
 end
-hotkey(Key.F11, function()
+hotkey(Key.HOME, function()
     emit_log(status_line())
     popup("Dead as Disco AP " .. VERSION .. ": " .. (in_run() and ("in a run, wave " .. run.round) or "not in a run"))
 end)

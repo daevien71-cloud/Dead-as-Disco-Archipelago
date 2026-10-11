@@ -60,7 +60,7 @@ local function loop()
 end
 local keybinds = {}
 function RegisterKeyBind(key, _, callback) keybinds[key] = callback end
-Key = {F5 = "F5", F6 = "F6", F7 = "F7", F8 = "F8", F9 = "F9", F10 = "F10", F11 = "F11"}
+Key = {F5 = "F5", F6 = "F6", F7 = "F7", F8 = "F8", F9 = "F9", F10 = "F10", HOME = "HOME"}
 ModifierKey = {CONTROL = "CTRL"}
 function FName(text) return {name = text} end
 function FText(text) return {text = text} end
@@ -160,7 +160,7 @@ check(read_events()[1] and read_events()[1].type == "hello", "hello event writte
 check(hooks[GS .. ":AdvanceRound"] ~= nil, "AdvanceRound hooked")
 check(hooks["/Script/Pagoda.PagodaInfiniteDiscoSubsystem:NotifyEnemyKilled"] ~= nil, "kill hook registered")
 check(hooks[PLAYER .. ":OnDeathStartedDelegate_Event"] ~= nil, "death hook registered")
-check(keybinds.F11 ~= nil and keybinds.F5 == nil and keybinds.F10 == nil, "only the status hotkey is on by default")
+check(keybinds.HOME ~= nil and keybinds.F5 == nil and keybinds.F10 == nil, "only the status hotkey is on by default")
 
 -- Start an Arcade run.
 local state = object("BP_PagodaGameState_InfiniteDisco_C /Game/Level.PersistentLevel.GS_1", {round = 0})
@@ -303,10 +303,10 @@ tick(4)
 check(charlie.CustomTimeDilation == 1.0, "leaving Arcade reverts molasses")
 check(read_status().in_run == false, "not in_run after leaving Arcade")
 
-keybinds.F11()
+keybinds.HOME()
 tick(1)
 local logs = events_of("log")
-check(logs[#logs].text:find("status:", 1, true) ~= nil, "Ctrl+F11 logs a status line")
+check(logs[#logs].text:find("status:", 1, true) ~= nil, "Ctrl+Home logs a status line")
 
 for _, line in ipairs(output) do
     if line:find("error", 1, true) and not line:find("kill stage", 1, true) then
