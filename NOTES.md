@@ -75,6 +75,15 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   `playtest\Start-Server.bat` / `Start-Client.bat` via explorer.exe, or have the user start them.
   The installer now writes the bridge path to `bridge_dir.txt` in the mod folder.
 
+- Fifth playtest: **on-screen pop-ups work.** The overlay is hosted on `WBP_LevelSelectLabelText` (its
+  widget tree is replaced by a canvas + TextBlock) and is rebuilt after level changes. Item messages from the
+  client ("You found your Molasses Trap") and the mod's own effect announcements both show.
+- Client bug found and fixed: `CommonContext.seed_name` stays None for clients in AP 0.6.7 and 0.6.9, so
+  progress went to `state/None_<team>_<slot>.json`. The client now takes the seed name from RoomInfo and
+  migrates the old file.
+- When reading bridge files from Claude's tools, delete the stale redirected copy under
+  `AppData\Local\Packages\Claude_*\LocalCache\Local\DeadAsDiscoAP` first, or you read old data.
+
 ## First live test checklist
 
 1. Run `Install.bat` (game closed). Start the game; check `...\Win64\ue4ss\UE4SS.log` for

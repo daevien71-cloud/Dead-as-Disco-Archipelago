@@ -128,6 +128,8 @@ Dead as Disco:
         start("b", ["-c", launch, "--nogui", "--connect", f"127.0.0.1:{PORT}", "--name", "DiscoFriend",
                     "--bridge-dir", str(game_b.dir)])
         wait_for(lambda: seen("a", "Goal: collect 1 Gold Records") and seen("b", "Goal:"), "both clients connected")
+        wait_for(lambda: any((game_a.dir / "state").glob("*_0_1.json")), "client saves progress")
+        assert not any((game_a.dir / "state").glob("None_*")), "progress saved without a seed name"
         print("PASS clients connect and read slot data")
 
         # Traps wait for a run, then fire.

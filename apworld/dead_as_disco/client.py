@@ -68,6 +68,7 @@ class DeadAsDiscoContext(CommonContext):
         self.tracker: Optional[Tracker] = None
         self.game_connected = False
         self.last_status_cleared = 0
+        self.room_seed_name: Optional[str] = None
 
     async def server_auth(self, password_requested: bool = False) -> None:
         if password_requested and not self.password:
@@ -85,9 +86,16 @@ class DeadAsDiscoContext(CommonContext):
         await super().disconnect(allow_autoreconnect)
 
     def on_package(self, cmd: str, args: dict[str, Any]) -> None:
-        if cmd == "Connected":
+        if cmd == "RoomInfo":
+            # CommonContext leaves seed_name unset for clients that don't set it themselves.
+            self.room_seed_name = args.get("seed_name")
+        elif cmd == "Connected":
             settings = Settings.from_slot_data(args.get("slot_data") or {})
-            state_path = self.bridge.directory / "state" / f"{self.seed_name}_{self.team}_{self.slot}.json"
+            state_dir = self.bridge.directory / "state"
+            state_path = state_dir / f"{self.room_seed_name}_{self.team}_{self.slot}.json"
+            unnamed = state_dir / f"None_{self.team}_{self.slot}.json"  # written by v0.1.0 before this fix
+            if not state_path.exists() and unnamed.exists():
+                unnamed.replace(state_path)
             self.tracker = Tracker(settings, state_path, log=logger.info, notify=self.popup)
             self.tracker.set_received([item.item for item in self.items_received])
             self.last_status_cleared = 0
