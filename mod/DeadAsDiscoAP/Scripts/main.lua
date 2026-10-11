@@ -19,7 +19,6 @@ local TICK_MS = 250
 local STATUS_EVERY_TICKS = 4
 local REGISTER_EVERY_TICKS = 8
 local SEARCH_EVERY_TICKS = 4
-local KILL_STAGE_SECONDS = 3
 
 -- Effect tuning. Global dilation slows or speeds the whole game; the music (FMOD) keeps its own clock.
 local SLOWMO_SPEED = 0.6
@@ -345,13 +344,15 @@ end
 -- DeathLink kill
 ---------------------------------------------------------------------------------------------
 
--- The game's own effects, found in its asset index (Characters/Common/Effects).
-local GE_DIE = "/Game/Pagoda/Characters/Common/Effects/GE_Die.GE_Die_C"
+-- The game's damage effect (Characters/Common/Effects) and its native SetByCaller tag (from the exe).
+-- Never apply GE_Die: it only marks a character as dead (Status.Death.Dead) without killing it, which
+-- left the player unable to deal or take damage.
 local GE_DAMAGE = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.GE_Damage_SetByCaller_C"
-local GE_DAMAGE_CDO = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.Default__GE_Damage_SetByCaller_C"
-local FALLBACK_DAMAGE_TAG = "SetByCaller.Damage"
+local DAMAGE_TAG = "SetByCaller.Damage"
+local KILL_ATTEMPTS = 12        -- one every KILL_ATTEMPT_TICKS, so ~6 seconds in all
+local KILL_ATTEMPT_TICKS = 2
 
-local pending_kill = nil -- {stage, at}
+local pending_kill = nil -- {attempt, ticks}
 local last_death_at = -100
 
 local function load_class(path)
@@ -366,57 +367,43 @@ local function load_class(path)
     error("could not load " .. path)
 end
 
--- Read the SetByCaller tag GE_Damage_SetByCaller expects from its defaults, so we don't have to guess.
-local damage_tag = nil
-local function find_damage_tag()
-    if damage_tag then return damage_tag end
-    load_class(GE_DAMAGE)
-    local ok, tag = pcall(function()
-        local defaults = StaticFindObject(GE_DAMAGE_CDO)
-        return defaults.Modifiers[1].ModifierMagnitude.SetByCallerMagnitude.DataTag.TagName:ToString()
-    end)
-    if ok and type(tag) == "string" and tag ~= "" and tag ~= "None" then
-        damage_tag = tag
-    else
-        damage_tag = FALLBACK_DAMAGE_TAG
-        log("could not read the damage tag (" .. tostring(tag) .. "); using " .. FALLBACK_DAMAGE_TAG)
-    end
-    log("damage tag: " .. damage_tag)
-    return damage_tag
+local function player_health()
+    local ok, value = pcall(function() return player():GetHealth() end)
+    return ok and tostring(value) or "?"
 end
 
-local function apply_effect_to_player(effect_class, tag, value)
+-- Leave the player on a sliver of health so any damage that lands is lethal, even if the game caps
+-- damage per hit (MaxDamageInHearts).
+local function lower_health()
+    local health = player().HealthAttributeSet.Health
+    health.BaseValue = 0.01
+    health.CurrentValue = 0.01
+end
+
+local function damage_player()
     local library = StaticFindObject("/Script/Pagoda.Default__PagodaCombatFunctionLibrary")
     if not valid(library) then error("combat library not found") end
-    library:ApplySetByCallerEffect(player(), effect_class, {TagName = FName(tag)}, value)
+    library:ApplySetByCallerEffect(player(), load_class(GE_DAMAGE), {TagName = FName(DAMAGE_TAG)}, 9999)
 end
 
-local KILL_STAGES = {
-    {name = "GE_Die", run = function()
-        apply_effect_to_player(load_class(GE_DIE), FALLBACK_DAMAGE_TAG, 1)
-    end},
-    {name = "GE_Damage_SetByCaller x9999", run = function()
-        local tag = find_damage_tag()
-        apply_effect_to_player(load_class(GE_DAMAGE), tag, 9999)
-    end},
-}
-
-local function try_kill_stage(stage)
-    local definition = KILL_STAGES[stage]
-    if not definition then
+local function kill_attempt()
+    local kill = pending_kill
+    kill.attempt = kill.attempt + 1
+    kill.ticks = 0
+    if kill.attempt > KILL_ATTEMPTS then
         pending_kill = nil
-        emit_log("DeathLink kill failed: every method was tried")
+        emit_log("DeathLink kill failed after " .. KILL_ATTEMPTS .. " hits (health " .. player_health() .. ")")
         emit({type = "kill_failed"})
         return
     end
-    pending_kill = {stage = stage, at = os.time()}
-    local ok, err = pcall(definition.run)
-    if ok then
-        log("kill stage " .. stage .. " (" .. definition.name .. ") applied")
-    else
-        log("kill stage " .. stage .. " (" .. definition.name .. ") error: " .. tostring(err))
-        pending_kill.at = -100 -- move on next tick
+    local before = player_health()
+    if kill.attempt >= 2 then
+        local ok, err = pcall(lower_health)
+        if not ok and kill.attempt == 2 then log("could not lower health: " .. tostring(err)) end
     end
+    local ok, err = pcall(damage_player)
+    log(string.format("kill hit %d: health %s -> %s%s", kill.attempt, before, player_health(),
+        ok and "" or (" error: " .. tostring(err))))
 end
 
 local function request_kill(source)
@@ -426,7 +413,8 @@ local function request_kill(source)
         return
     end
     log("DeathLink kill requested (" .. tostring(source) .. ")")
-    try_kill_stage(1)
+    pending_kill = {attempt = 0, ticks = 0}
+    kill_attempt()
 end
 
 local function on_player_death()
@@ -434,9 +422,7 @@ local function on_player_death()
     if now - last_death_at < 3 then return end
     last_death_at = now
     if pending_kill then
-        if now - pending_kill.at <= KILL_STAGE_SECONDS then
-            emit_log("DeathLink kill worked with method " .. pending_kill.stage .. " (" .. KILL_STAGES[pending_kill.stage].name .. ")")
-        end
+        emit_log("DeathLink kill worked on hit " .. pending_kill.attempt)
         pending_kill = nil
     end
     run.dead = true
@@ -540,9 +526,9 @@ end
 local tick_count = 0
 
 local function status_line()
-    return string.format("status: ticks=%d bridge=%s in_run=%s round=%d cleared=%d dead=%s effect=%s damage_tag=%s hooks=%d",
+    return string.format("status: ticks=%d bridge=%s in_run=%s round=%d cleared=%d dead=%s effect=%s health=%s hooks=%d",
         tick_count, tostring(bridge_ready), tostring(in_run()), run.round, run.cleared, tostring(run.dead),
-        active_effect and active_effect.key or "none", tostring(damage_tag),
+        active_effect and active_effect.key or "none", player_health(),
         (function() local n = 0 for _ in pairs(registered) do n = n + 1 end return n end)())
 end
 
@@ -568,11 +554,12 @@ local function tick()
 
     if active_effect and os.time() >= active_effect.ends_at then end_effect("expired") end
 
-    if pending_kill and os.time() - pending_kill.at >= KILL_STAGE_SECONDS then
-        if run.dead then
+    if pending_kill then
+        pending_kill.ticks = pending_kill.ticks + 1
+        if run.dead or not valid(player()) then
             pending_kill = nil
-        else
-            try_kill_stage(pending_kill.stage + 1)
+        elseif pending_kill.ticks >= KILL_ATTEMPT_TICKS then
+            kill_attempt()
         end
     end
 

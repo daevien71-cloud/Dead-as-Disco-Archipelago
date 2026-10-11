@@ -127,7 +127,9 @@ check(hooks[PLAYER .. ":OnDeathStartedDelegate_Event"] ~= nil, "death hook regis
 
 -- Start an Arcade run.
 local state = object("BP_PagodaGameState_InfiniteDisco_C /Game/Level.PersistentLevel.GS_1", {round = 0})
-local charlie = object("BP_PagodaPlayerCharacter_Charlie_C /Game/Level.PersistentLevel.Charlie_1", {CustomTimeDilation = 1.0})
+local charlie = object("BP_PagodaPlayerCharacter_Charlie_C /Game/Level.PersistentLevel.Charlie_1", {CustomTimeDilation = 1.0,
+    HealthAttributeSet = {Health = {BaseValue = 100, CurrentValue = 100}}})
+function charlie:GetHealth() return self.HealthAttributeSet.Health.CurrentValue end
 local camera = object("PlayerCameraManager", {fades = {}})
 function camera:StartCameraFade(from, to) self.fades[#self.fades + 1] = {from, to} end
 local pc = object("BP_PagodaPlayerController_C /Game/Level.PersistentLevel.PC_1", {PlayerCameraManager = camera})
@@ -184,23 +186,20 @@ tick(1)
 local failed = events_of("effect_failed")
 check(#failed == 1 and failed[1].reason == "unknown effect", "unknown effect reported as failed")
 
--- DeathLink kill: GE_Die first, applied to the player through the combat library.
-local GE_DIE = "/Game/Pagoda/Characters/Common/Effects/GE_Die.GE_Die_C"
+-- DeathLink kill: the game's damage effect with its native SetByCaller tag. Never GE_Die.
 local GE_DAMAGE = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.GE_Damage_SetByCaller_C"
-local GE_DAMAGE_CDO = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.Default__GE_Damage_SetByCaller_C"
-functions[GE_DIE] = object(GE_DIE)
 functions[GE_DAMAGE] = object(GE_DAMAGE)
-functions[GE_DAMAGE_CDO] = object(GE_DAMAGE_CDO, {Modifiers = {{ModifierMagnitude = {SetByCallerMagnitude =
-    {DataTag = {TagName = {ToString = function() return "SetByCaller.Health.Damage" end}}}}}}})
 command({type = "kill", source = "Friend"})
 command({type = "kill", source = "Friend again"})
 tick(1)
-check(#library.calls == 1 and library.calls[1].effect == functions[GE_DIE] and library.calls[1].target == charlie,
-    "kill applies GE_Die to the player, once even if asked twice")
+check(#library.calls == 1 and library.calls[1].effect == functions[GE_DAMAGE] and library.calls[1].target == charlie
+    and library.calls[1].value == 9999 and library.calls[1].tag.TagName.name == "SetByCaller.Damage",
+    "kill applies GE_Damage_SetByCaller x9999 to the player, once even if asked twice")
+check(charlie.HealthAttributeSet.Health.BaseValue == 100, "first hit leaves health alone")
 hooks[PLAYER .. ":OnDeathStartedDelegate_Event"](param(charlie))
 tick(4)
 local credits = events_of("log")
-check(credits[#credits].text:find("method 1 (GE_Die)", 1, true) ~= nil, "GE_Die credited for the death")
+check(credits[#credits].text:find("worked on hit 1", 1, true) ~= nil, "first hit credited for the death")
 check(#events_of("death") == 1, "death event emitted")
 check(camera.fades[#camera.fades][2] == 0.0, "death reverts blackout")
 check(read_status().in_run == false, "not in_run after death")
@@ -220,20 +219,17 @@ local last_wave = events_of("wave")
 check(last_wave[#last_wave].wave == 1, "new run reports wave 1 again")
 check(read_status().cleared == 1, "status cleared resets per run")
 
--- Kill fallback: if GE_Die doesn't kill within 3s, apply GE_Damage_SetByCaller with the tag read from its defaults.
+-- If the first hit doesn't kill, health drops to a sliver and hits repeat every 2 ticks, 12 in all.
 command({type = "kill"})
 tick(1)
-check(#library.calls == 2 and library.calls[2].effect == functions[GE_DIE], "kill stage 1 applies GE_Die")
-local t = os.time() + 4
-while os.time() < t do end
-tick(1)
-local last = library.calls[3]
-check(last and last.effect == functions[GE_DAMAGE] and last.value == 9999 and last.tag.TagName.name == "SetByCaller.Health.Damage",
-    "kill stage 2 applies GE_Damage_SetByCaller x9999 with the tag from its defaults")
-t = os.time() + 4
-while os.time() < t do end
-tick(1)
+local calls_before = #library.calls
+tick(2)
+check(#library.calls == calls_before + 1 and charlie.HealthAttributeSet.Health.BaseValue == 0.01
+    and charlie.HealthAttributeSet.Health.CurrentValue == 0.01, "second hit lowers health first")
+tick(40)
+check(#library.calls == calls_before + 11, "twelve hits in all (got " .. (#library.calls - calls_before + 1) .. ")")
 check(#events_of("kill_failed") == 1, "kill_failed reported when nothing worked")
+charlie.HealthAttributeSet.Health.BaseValue, charlie.HealthAttributeSet.Health.CurrentValue = 100, 100
 
 -- Client restart truncates the command file; ids restart from 1 under a new session.
 local file = io.open(bridge .. "commands.jsonl", "wb")

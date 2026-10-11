@@ -48,8 +48,14 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   natural death went out over DeathLink. Engine `ApplyDamage` and `PagodaCharacter:FinishDeath` do **not** kill.
 - The game's asset index (Pagoda-Windows.utoc directory index, readable) has
   `/Game/Pagoda/Characters/Common/Effects/GE_Die` and `GE_Damage_SetByCaller`, plus
-  `/Game/Pagoda/Environment/Common/Volumes/BP_Volume_Death`. The kill now applies GE_Die through
-  `PagodaCombatFunctionLibrary:ApplySetByCallerEffect`, then GE_Damage_SetByCaller x9999 (tag read from its CDO).
+  `/Game/Pagoda/Environment/Common/Volumes/BP_Volume_Death`.
+- Third playtest: **never apply GE_Die.** It only marks a character dead (`Status.Death.Dead`) without
+  killing it; afterwards nobody could deal or take damage until the game restarted (runtime only, saves fine).
+- Native gameplay tags are UTF-16 strings in the exe: `SetByCaller.Damage` (plus Heal, MaxHealth,
+  MaxDamageInHearts, IncomingDamageMultiplier, ...), `Status.Death.Dead/Dying`. Reading the tag from
+  GE_Damage_SetByCaller's CDO returned None (likely an execution calc, not a modifier).
+- Kill now: GE_Damage_SetByCaller x9999 with SetByCaller.Damage; from the 2nd hit on, Health is set to 0.01
+  first; one hit per 0.5s, up to 12. Logs health before/after each hit.
 - Processes started by Claude (the Claude desktop app is MSIX-packaged) see a redirected
   `%LOCALAPPDATA%`. The game can't see that copy. For playtests, start the AP server/client through
   `playtest\Start-Server.bat` / `Start-Client.bat` via explorer.exe, or have the user start them.
