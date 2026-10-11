@@ -121,6 +121,8 @@ try {
     if (Test-Path -LiteralPath $ModDir) { Remove-Item -LiteralPath $ModDir -Recurse -Force }
     Copy-Item -LiteralPath $source -Destination $ModDir -Recurse
     Set-Content -LiteralPath (Join-Path $ModDir 'enabled.txt') -Value '' -Encoding ASCII
+    # The game can't be relied on to see %LOCALAPPDATA%, so tell the mod where the client looks.
+    [System.IO.File]::WriteAllText((Join-Path $ModDir 'bridge_dir.txt'), $BridgeDir)
     Set-ModsTxtEntry (Join-Path $ModsDir 'mods.txt') $ModName 1
 
     New-Item -ItemType Directory -Force -Path $BridgeDir | Out-Null

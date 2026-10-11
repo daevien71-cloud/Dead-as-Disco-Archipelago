@@ -43,7 +43,26 @@ do
     json = result
 end
 
-local BRIDGE_DIR = (os.getenv("LOCALAPPDATA") or ".") .. "\\DeadAsDiscoAP\\"
+-- The installer writes the bridge folder into bridge_dir.txt next to the Scripts folder; the
+-- environment is only a fallback because the game's environment can't be relied on.
+local function resolve_bridge_dir()
+    local here = (debug.getinfo(1, "S").source or ""):match("^@(.*[\\/])")
+    if here then
+        local file = io.open(here .. "..\\bridge_dir.txt", "r")
+        if file then
+            local line = (file:read("l") or ""):gsub("%s+$", "")
+            file:close()
+            if line ~= "" then return line:gsub("[\\/]?$", "\\"), "bridge_dir.txt" end
+        end
+    end
+    local localappdata = os.getenv("LOCALAPPDATA")
+    if localappdata then return localappdata .. "\\DeadAsDiscoAP\\", "LOCALAPPDATA" end
+    local profile = os.getenv("USERPROFILE")
+    if profile then return profile .. "\\AppData\\Local\\DeadAsDiscoAP\\", "USERPROFILE" end
+    return ".\\DeadAsDiscoAP\\", "working directory"
+end
+
+local BRIDGE_DIR, BRIDGE_SOURCE = resolve_bridge_dir()
 local EVENTS_PATH = BRIDGE_DIR .. "events.jsonl"
 local COMMANDS_PATH = BRIDGE_DIR .. "commands.jsonl"
 local STATUS_PATH = BRIDGE_DIR .. "status.json"
@@ -56,17 +75,24 @@ local session = string.format("%d-%06d", os.time(), math.random(0, 999999))
 ---------------------------------------------------------------------------------------------
 
 local bridge_ready = false
+local bridge_error_logged = false
 local event_seq = 0
 local queued_events = {}
 
 local function open_bridge()
     if bridge_ready then return true end
-    local file = io.open(EVENTS_PATH, "w")
-    if not file then return false end
+    local file, err = io.open(EVENTS_PATH, "w")
+    if not file then
+        if not bridge_error_logged then
+            bridge_error_logged = true
+            log("cannot write to the bridge folder " .. BRIDGE_DIR .. " (from " .. BRIDGE_SOURCE .. "): " .. tostring(err))
+        end
+        return false
+    end
     file:write(json.encode({type = "hello", session = session, version = VERSION, t = os.time()}) .. "\n")
     file:close()
     bridge_ready = true
-    log("bridge open at " .. BRIDGE_DIR)
+    log("bridge open at " .. BRIDGE_DIR .. " (from " .. BRIDGE_SOURCE .. ")")
     return true
 end
 
@@ -404,7 +430,10 @@ local function on_damage_effect(target, effect, tag, value)
         log(string.format("damage sample: target=%s effect=%s tag=%s value=%s",
             target_name, effect_name, tag_name, tostring(amount)))
     end
-    if not learned_damage and target_name:find(PLAYER_CLASS, 1, true) and valid(effect_class)
+    -- This function also sets things like attack range and the music-sync meter, so only
+    -- learn from effects that are explicitly about damage.
+    local is_damage = (effect_name .. " " .. tag_name):lower():find("damage", 1, true) ~= nil
+    if not learned_damage and is_damage and target_name:find(PLAYER_CLASS, 1, true) and valid(effect_class)
         and tag_name ~= "?" and type(amount) == "number" and amount ~= 0 then
         learned_damage = {effect = effect_class, tag = tag_name, sign = amount > 0 and 1 or -1}
         emit_log("learned how enemies damage you: " .. effect_name .. " / " .. tag_name)
@@ -505,17 +534,18 @@ local function write_status()
     file:close()
 end
 
+local tick_count = 0
+
 local function status_line()
-    return string.format("status: in_run=%s round=%d cleared=%d dead=%s effect=%s learned_damage=%s hooks=%d",
-        tostring(in_run()), run.round, run.cleared, tostring(run.dead),
+    return string.format("status: ticks=%d bridge=%s in_run=%s round=%d cleared=%d dead=%s effect=%s learned_damage=%s hooks=%d",
+        tick_count, tostring(bridge_ready), tostring(in_run()), run.round, run.cleared, tostring(run.dead),
         active_effect and active_effect.key or "none", tostring(learned_damage ~= nil),
         (function() local n = 0 for _ in pairs(registered) do n = n + 1 end return n end)())
 end
 
-local tick_count = 0
-
 local function tick()
     tick_count = tick_count + 1
+    if tick_count == 1 or tick_count == 40 then log("main loop running (tick " .. tick_count .. ")") end
     if tick_count % REGISTER_EVERY_TICKS == 1 then register_hooks() end
 
     -- Poll the wave counter as a backstop for missed hook calls.
@@ -550,18 +580,14 @@ local function tick()
     flush_events()
 end
 
-local tick_queued = false
-LoopAsync(TICK_MS, function()
-    if not tick_queued then
-        tick_queued = true
-        ExecuteInGameThread(function()
-            local ok, err = pcall(tick)
-            tick_queued = false
-            if not ok then log("tick error: " .. tostring(err)) end
-        end)
-    end
-    return false
-end)
+-- LoopAsync only fired once in this UE4SS build, so each tick schedules the next one on the
+-- game thread before doing any work; an error in tick() can't stop the loop.
+local function run_tick()
+    ExecuteInGameThreadWithDelay(TICK_MS, run_tick)
+    local ok, err = pcall(tick)
+    if not ok then log("tick error: " .. tostring(err)) end
+end
+ExecuteInGameThread(run_tick)
 
 local function hotkey(key, action)
     RegisterKeyBind(key, {ModifierKey.CONTROL}, function()

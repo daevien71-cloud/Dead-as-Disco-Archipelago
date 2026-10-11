@@ -49,9 +49,15 @@ function RegisterHook(path, pre, post)
     return 1, 2
 end
 
-local loop
-function LoopAsync(_, callback) loop = callback end
+-- The mod drives itself with ExecuteInGameThreadWithDelay; each test "tick" runs the pending one.
+local scheduled = {}
+function ExecuteInGameThreadWithDelay(_, callback) scheduled[#scheduled + 1] = callback end
 function ExecuteInGameThread(callback) callback() end
+local function loop()
+    local due = scheduled
+    scheduled = {}
+    for _, callback in ipairs(due) do callback() end
+end
 local keybinds = {}
 function RegisterKeyBind(key, _, callback) keybinds[key] = callback end
 Key = {F5 = "F5", F6 = "F6", F7 = "F7", F8 = "F8", F9 = "F9", F10 = "F10", F11 = "F11"}
@@ -90,7 +96,12 @@ local function events_of(kind)
     for _, e in ipairs(read_events()) do if e.type == kind then result[#result + 1] = e end end
     return result
 end
-local function tick(n) for _ = 1, (n or 1) do loop() end end
+local function tick(n)
+    for _ = 1, (n or 1) do
+        loop()
+        if #scheduled ~= 1 then check(false, "exactly one next tick scheduled (got " .. #scheduled .. ")") end
+    end
+end
 local command_id = 0
 local function command(c)
     command_id = command_id + 1
@@ -108,7 +119,7 @@ end
 
 -- ----- scenario ------------------------------------------------------------------------
 dofile(root .. "/mod/DeadAsDiscoAP/Scripts/main.lua")
-check(loop ~= nil, "main loop registered")
+check(#scheduled == 1, "main loop schedules its next tick")
 tick(1)
 check(read_events()[1] and read_events()[1].type == "hello", "hello event written on start")
 check(hooks[GS .. ":AdvanceRound"] ~= nil, "AdvanceRound hooked")
@@ -174,6 +185,13 @@ command({type = "effect", effect = "nope"})
 tick(1)
 local failed = events_of("effect_failed")
 check(#failed == 1 and failed[1].reason == "unknown effect", "unknown effect reported as failed")
+
+-- Non-damage uses of the same function (seen live: attack range on the player) are not learned.
+local range_effect = object("BlueprintGeneratedClass /Game/GE_PlayerAttackTargetingRange_SetByCaller_Override_C")
+hooks["/Script/Pagoda.PagodaCombatFunctionLibrary:ApplySetByCallerEffect"](
+    param(library), param(charlie), param(range_effect), param({TagName = {ToString = function() return "SetByCaller.AttackRange" end}}), param(450))
+tick(4)
+check(read_status().learned_damage == false, "attack-range effect is not mistaken for damage")
 
 -- Learn enemy damage, then a DeathLink kill uses it.
 local damage_effect = object("BlueprintGeneratedClass /Game/GE_Damage.GE_Damage_C")

@@ -35,6 +35,21 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   native `PagodaCharacter:FinishDeath` ~2s later.
 - Audio is FMOD, so time dilation should not change the music.
 
+## Live findings (2026-10-11, first playtest)
+
+- UE4SS loads, all 8 hooks register, and the hotkey effects apply in-game (slow-mo 0.6, fast-forward 1.4,
+  molasses, blackout, fever).
+- `LoopAsync` only fired once in this UE4SS build. The main loop now reschedules itself with
+  `ExecuteInGameThreadWithDelay` (confirmed ticking in-game).
+- `PagodaCombatFunctionLibrary:ApplySetByCallerEffect` on the player is used for attack range
+  (`SetByCaller.AttackRange`, 450) and the music-sync meter, **not** for enemy damage. Damage-learning now
+  only accepts effects with "damage" in the class or tag; none seen yet, so DeathLink kills fall through to
+  engine ApplyDamage / FinishDeath until we find the real damage path.
+- Processes started by Claude (the Claude desktop app is MSIX-packaged) see a redirected
+  `%LOCALAPPDATA%`. The game can't see that copy. For playtests, start the AP server/client through
+  `playtest\Start-Server.bat` / `Start-Client.bat` via explorer.exe, or have the user start them.
+  The installer now writes the bridge path to `bridge_dir.txt` in the mod folder.
+
 ## First live test checklist
 
 1. Run `Install.bat` (game closed). Start the game; check `...\Win64\ue4ss\UE4SS.log` for
