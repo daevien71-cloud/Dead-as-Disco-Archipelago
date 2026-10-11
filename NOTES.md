@@ -25,6 +25,16 @@ Built v0.1.0 (APWorld + client + UE4SS Lua mod + installer). Tested offline only
 Live-tested in the real game: waves, kill checks, all five effects, outgoing DeathLink and the DeathLink
 kill. Still untested live: an incoming DeathLink from another player, long runs and song changes.
 
+## Linux (owner's main gaming PC: Kubuntu 26.04, Steam + Proton)
+
+- Same Windows mod and UE4SS under Proton; needs Steam launch option `WINEDLLOVERRIDES="dwmapi=n,b" %command%`.
+- `install/install_linux.py` (via `Install-Linux.sh`) finds native/Flatpak/Snap Steam libraries, writes
+  `bridge_dir.txt` = `C:\users\steamuser\AppData\Local\DeadAsDiscoAP` and creates that folder in the prefix
+  (`steamapps/compatdata/3404260/pfx/drive_c/users/steamuser/AppData/Local`).
+- The native Linux AP client finds the same folder through the prefix (`bridge.proton_local_appdata`).
+- Tested only against a fake Steam tree (`tests/test_install_linux.py`); **not yet run on the real Linux PC.**
+- Owner has pak cosmetic mods in `Content/Paks/~mods` on both PCs; installers never touch Content/Paks.
+
 ## What the mod relies on (from the earlier Codex research)
 
 Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 8115716…:
