@@ -160,6 +160,7 @@ def launch(*launch_args: str) -> None:
     async def main(args) -> None:
         ctx = DeadAsDiscoContext(args.connect, args.password, Path(args.bridge_dir) if args.bridge_dir else None)
         ctx.auth = args.name
+        logger.info(f"Talking to the game through {ctx.bridge.directory}")
         ctx.server_task = asyncio.create_task(server_loop(ctx), name="server loop")
         game_task = asyncio.create_task(game_loop(ctx), name="game loop")
         if gui_enabled:

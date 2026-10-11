@@ -12,8 +12,9 @@ who play other games.
 
 ## Install and play
 
-See [the setup guide](apworld/dead_as_disco/docs/setup_en.md). Short version: run `Install.bat`, install
-`dead_as_disco.apworld`, open **Dead as Disco Client** from the Archipelago Launcher, play Arcade.
+See [the setup guide](apworld/dead_as_disco/docs/setup_en.md). Short version: run `Install.bat` (Windows) or
+`bash Install-Linux.sh` (Linux/Proton, plus one Steam launch option), install `dead_as_disco.apworld`, open
+**Dead as Disco Client** from the Archipelago Launcher, play Arcade.
 
 ## How it fits together
 
@@ -38,6 +39,7 @@ python build.py                      # dist/dead_as_disco.apworld and the releas
 lua tests/lua/test_main.lua <repo>   # mod tests against a fake UE4SS (set LOCALAPPDATA to a temp dir)
 python -m unittest worlds.dead_as_disco.test.test_world worlds.dead_as_disco.test.test_tracker  # from an AP checkout
 python tests/e2e/run_e2e.py <AP checkout with the world installed>   # server + 2 clients + fake games
+python tests/test_install_linux.py   # Linux installer + Proton prefix discovery against a fake Steam tree
 ```
 
 `baseline/` holds the earlier ChatGPT-built version unchanged, for reference.

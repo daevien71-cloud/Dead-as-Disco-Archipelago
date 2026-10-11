@@ -16,6 +16,9 @@ RELEASE_FILES = [
     "README.md",
     "Install.bat",
     "Uninstall.bat",
+    "Install-Linux.sh",
+    "Uninstall-Linux.sh",
+    "install/install_linux.py",
     "Dead as Disco.yaml",
     "install/Install-DeadAsDiscoAP.ps1",
     "mod/DeadAsDiscoAP/Scripts/main.lua",
@@ -40,7 +43,11 @@ def build_release(apworld: Path) -> Path:
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(apworld, f"{name}/dead_as_disco.apworld")
         for relative in RELEASE_FILES:
-            archive.write(ROOT / relative, f"{name}/{relative}")
+            info = zipfile.ZipInfo.from_file(ROOT / relative, f"{name}/{relative}")
+            # Keep Linux scripts executable when extracted with unzip/Ark.
+            info.external_attr = (0o755 if relative.endswith((".sh", "_linux.py")) else 0o644) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(info, (ROOT / relative).read_bytes())
     return target
 
 

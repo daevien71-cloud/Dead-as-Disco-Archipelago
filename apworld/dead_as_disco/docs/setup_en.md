@@ -2,7 +2,7 @@
 
 ## You need
 
-- Dead as Disco on Steam (Windows).
+- Dead as Disco on Steam (Windows, or Linux through Proton).
 - [Archipelago](https://github.com/ArchipelagoMW/Archipelago/releases) 0.6.4 or newer.
 - The `DeadAsDiscoAP` release zip.
 
@@ -15,6 +15,20 @@
 3. Double-click `dead_as_disco.apworld` (or use **Install APWorld** in the Archipelago Launcher).
 
 To remove it later, run `Uninstall.bat`. Your saves are never touched.
+
+### Linux (Steam + Proton)
+
+1. Close Dead as Disco. If you've never started it on this PC, start it once first so Steam creates its
+   Proton prefix.
+2. Extract the release zip and run `bash Install-Linux.sh` in a terminal from that folder. It finds the game in
+   your Steam libraries (native, Flatpak or Snap Steam), installs UE4SS if needed and adds the mod.
+3. In Steam: right-click Dead as Disco > **Properties** > **Launch Options**, and enter
+   `WINEDLLOVERRIDES="dwmapi=n,b" %command%`. Without it Proton ignores UE4SS. The installer tells you if
+   it's already set.
+4. Install `dead_as_disco.apworld` with **Install APWorld** in the Linux Archipelago Launcher (AppImage).
+
+The client finds the game's Proton prefix by itself and says "Talking to the game through ..." when it starts.
+To remove the mod: `bash Uninstall-Linux.sh`.
 
 ## Generate a multiworld
 

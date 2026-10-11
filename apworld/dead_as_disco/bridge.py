@@ -4,21 +4,64 @@ All files live in %LOCALAPPDATA%/DeadAsDiscoAP:
   events.jsonl    game -> client, one JSON object per line. The mod truncates it on game start.
   commands.jsonl  client -> game, one JSON object per line. The client truncates it on client start.
   status.json     game -> client heartbeat, rewritten about once a second.
+
+On Linux the game runs under Proton, where %LOCALAPPDATA% is a folder inside the game's Proton prefix,
+so the native client looks for it there.
 """
 
 import json
 import os
+import re
+import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
 HEARTBEAT_TIMEOUT = 5.0
+STEAM_APP_ID = "3404260"
+
+
+def steam_libraries() -> list[Path]:
+    """Every Steam library folder on Linux: native, Flatpak and Snap installs."""
+    home = Path.home()
+    roots = [home / ".steam" / "steam", home / ".local" / "share" / "Steam",
+             home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+             home / "snap" / "steam" / "common" / ".local" / "share" / "Steam"]
+    libraries: list[Path] = []
+    for root in roots:
+        libraries.append(root)
+        try:
+            text = (root / "steamapps" / "libraryfolders.vdf").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        libraries += [Path(path.replace("\\\\", "\\")) for path in re.findall(r'"path"\s+"([^"]+)"', text)]
+    unique: dict[str, Path] = {}
+    for library in libraries:
+        try:
+            unique.setdefault(str(library.resolve()), library)
+        except OSError:
+            continue
+    return list(unique.values())
+
+
+def proton_local_appdata() -> Optional[Path]:
+    """The game's C:\\users\\steamuser\\AppData\\Local inside its Proton prefix, if the game has run once."""
+    for library in steam_libraries():
+        local = (library / "steamapps" / "compatdata" / STEAM_APP_ID / "pfx" / "drive_c" / "users" / "steamuser"
+                 / "AppData" / "Local")
+        if local.is_dir():
+            return local
+    return None
 
 
 def default_bridge_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "DeadAsDiscoAP"
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "DeadAsDiscoAP"
+    local = proton_local_appdata()
+    if local:
+        return local / "DeadAsDiscoAP"
+    return Path.home() / ".local" / "share" / "DeadAsDiscoAP"
 
 
 class GameBridge:
