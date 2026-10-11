@@ -1,0 +1,33 @@
+# Dead as Disco player options. Change "name", then give this file to whoever generates the multiworld.
+name: YourName
+game: Dead as Disco
+description: Dead as Disco Arcade
+
+Dead as Disco:
+  # Once you hold enough Gold Records, clear this wave in a single Arcade run to win.
+  # wave_10, wave_20, wave_30, wave_40, wave_50, wave_75, wave_100, wave_150 or wave_200
+  goal_wave: wave_50
+
+  # Gold Records shuffled into the multiworld, and how many you need.
+  gold_record_count: 7
+  gold_records_required: 5
+
+  # Waves 1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150 and 200 are always checks.
+  # Set this to e.g. 5 to also make every 5th wave a check. 0 = milestones only.
+  wave_check_interval: 0
+
+  # Lifetime-kill checks (25, 50, 100, 150, 200, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 5000).
+  # This is how many of those are used. 0 turns them off.
+  kill_checks: 8
+
+  # Percentage of non-Gold-Record items that are traps, and which traps.
+  trap_percentage: 35
+  enabled_traps: ["Slow-Mo Trap", "Fast-Forward Trap", "Molasses Trap", "Blackout Trap"]
+
+  # Seconds that traps and Disco Fever last.
+  effect_duration: 15
+
+  # DeathLink, with a chance on each side.
+  death_link: true
+  death_link_send_chance: 25
+  death_link_receive_chance: 40
