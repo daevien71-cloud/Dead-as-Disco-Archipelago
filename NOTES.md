@@ -85,6 +85,15 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
 - When reading bridge files from Claude's tools, delete the stale redirected copy under
   `AppData\Local\Packages\Claude_*\LocalCache\Local\DeadAsDiscoAP` first, or you read old data.
 
+- `/testdeathlink [name]` in the client bounces a fake DeathLink to your own slot only (no DeathLink tag,
+  `slots=[own]`), so it can't reach friends; the client then rolls/shields/kills like a real one.
+- `Update.bat` / `Update-Linux.sh`: git pull in a clone, otherwise download the branch zip from GitHub (needs
+  the repo to be public; it's private as of 2026-10-11, so the download returns 404).
+- Owner's Pyroette (Vermillion Dance boss ability, `BP_BossAbility_VermillionDance_Pyroette`, anim
+  `A_AI_Pyroette_Spin`) spins too fast with their model mod. A separate UE4SS mod `DaevienPyroetteSpin`
+  (kept OUT of this repo at `Documents\DaevienPyroetteSpin`, zip on the Desktop) slows that actor's mesh
+  animation, rotating movement and spin variables to 1%. Not yet tried in-game.
+
 ## First live test checklist
 
 1. Run `Install.bat` (game closed). Start the game; check `...\Win64\ue4ss\UE4SS.log` for
