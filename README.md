@@ -13,8 +13,11 @@ who play other games.
 ## Install and play
 
 See [the setup guide](apworld/dead_as_disco/docs/setup_en.md). Short version: run `Install.bat` (Windows) or
-`bash Install-Linux.sh` (Linux/Proton, plus one Steam launch option), install `dead_as_disco.apworld`, open
-**Dead as Disco Client** from the Archipelago Launcher, play Arcade.
+`bash Install-Linux.sh` (Linux/Proton, plus one Steam launch option), give
+[`dead_as_disco.apworld`](dead_as_disco.apworld) (top of this repo) to the Archipelago Launcher's
+**Install APWorld**, open **Dead as Disco Client**, play Arcade.
+
+Only want to play alongside someone else's Dead as Disco? You just need `dead_as_disco.apworld` to generate.
 
 ## How it fits together
 
@@ -35,7 +38,7 @@ Archipelago server ── apworld/dead_as_disco/client.py (runs inside the Archi
 ## Develop
 
 ```
-python build.py                      # dist/dead_as_disco.apworld and the release zip
+python build.py                      # dist/ release zip + dead_as_disco.apworld (commit the latter)
 lua tests/lua/test_main.lua <repo>   # mod tests against a fake UE4SS (set LOCALAPPDATA to a temp dir)
 python -m unittest worlds.dead_as_disco.test.test_world worlds.dead_as_disco.test.test_tracker  # from an AP checkout
 python tests/e2e/run_e2e.py <AP checkout with the world installed>   # server + 2 clients + fake games

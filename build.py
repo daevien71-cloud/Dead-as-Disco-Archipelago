@@ -29,11 +29,18 @@ RELEASE_FILES = [
 
 
 def build_apworld() -> Path:
+    """Fixed timestamps and order, so the committed copy only changes when the world does."""
     target = DIST / "dead_as_disco.apworld"
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(WORLD.rglob("*")):
             if path.is_file() and "__pycache__" not in path.parts:
-                archive.write(path, Path("dead_as_disco") / path.relative_to(WORLD))
+                info = zipfile.ZipInfo((Path("dead_as_disco") / path.relative_to(WORLD)).as_posix(),
+                                       date_time=(2026, 1, 1, 0, 0, 0))
+                info.external_attr = 0o644 << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, path.read_bytes())
+    # A ready-to-use copy at the top of the repo for people who download it from GitHub.
+    shutil.copyfile(target, ROOT / "dead_as_disco.apworld")
     return target
 
 
@@ -56,4 +63,4 @@ if __name__ == "__main__":
     DIST.mkdir()
     apworld = build_apworld()
     release = build_release(apworld)
-    print(f"Built {apworld.relative_to(ROOT)} and {release.relative_to(ROOT)}")
+    print(f"Built {apworld.relative_to(ROOT)} (copied to dead_as_disco.apworld) and {release.relative_to(ROOT)}")
