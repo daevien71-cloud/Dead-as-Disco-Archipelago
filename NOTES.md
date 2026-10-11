@@ -22,7 +22,8 @@ Built v0.1.0 (APWorld + client + UE4SS Lua mod + installer). Tested offline only
 - End-to-end: real AP server, two clients, fake games (`tests/e2e/run_e2e.py`).
 - Installer/uninstaller against a fake game folder; auto-detection finds the real Steam install.
 
-**Not yet tested in the real game.** The first live test needs to confirm the items below.
+Live-tested in the real game: waves, kill checks, all five effects, outgoing DeathLink and the DeathLink
+kill. Still untested live: an incoming DeathLink from another player, long runs and song changes.
 
 ## What the mod relies on (from the earlier Codex research)
 
@@ -56,6 +57,9 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   GE_Damage_SetByCaller's CDO returned None (likely an execution calc, not a modifier).
 - Kill now: GE_Damage_SetByCaller x9999 with SetByCaller.Damage; from the 2nd hit on, Health is set to 0.01
   first; one hit per 0.5s, up to 12. Logs health before/after each hit.
+- Fourth playtest: **the kill works.** The first GE_Damage_SetByCaller hit killed instantly (the death hook
+  fired during the call) and the death went out over DeathLink. `PagodaCharacter:GetHealth()` read 0.0 even
+  before the hit, so don't trust it for diagnostics.
 - Processes started by Claude (the Claude desktop app is MSIX-packaged) see a redirected
   `%LOCALAPPDATA%`. The game can't see that copy. For playtests, start the AP server/client through
   `playtest\Start-Server.bat` / `Start-Client.bat` via explorer.exe, or have the user start them.
