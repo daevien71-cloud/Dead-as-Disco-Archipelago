@@ -30,6 +30,12 @@ To remove it later, run `Uninstall.bat`. Your saves are never touched.
 The client finds the game's Proton prefix by itself and says "Talking to the game through ..." when it starts.
 To remove the mod: `bash Uninstall-Linux.sh`.
 
+## Update
+
+Close the game, then run `Update.bat` (Windows) or `bash Update-Linux.sh` (Linux) from the mod's folder. It
+downloads the latest version (or uses `git pull` if the folder is a git clone), reinstalls the mod and puts the
+new `dead_as_disco.apworld` where Archipelago loads it. Restart the Archipelago Launcher afterwards.
+
 ## Generate a multiworld
 
 Archipelago's website can't generate games for custom worlds, so whoever generates the multiworld
