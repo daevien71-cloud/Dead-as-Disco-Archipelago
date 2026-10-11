@@ -43,8 +43,13 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   `ExecuteInGameThreadWithDelay` (confirmed ticking in-game).
 - `PagodaCombatFunctionLibrary:ApplySetByCallerEffect` on the player is used for attack range
   (`SetByCaller.AttackRange`, 450) and the music-sync meter, **not** for enemy damage. Damage-learning now
-  only accepts effects with "damage" in the class or tag; none seen yet, so DeathLink kills fall through to
-  engine ApplyDamage / FinishDeath until we find the real damage path.
+  only accepts effects with "damage" in the class or tag; none seen yet.
+- Second playtest: waves 1–3 and the 25-kill check sent, Fast-Forward and Slow-Mo traps fired and wore off,
+  natural death went out over DeathLink. Engine `ApplyDamage` and `PagodaCharacter:FinishDeath` do **not** kill.
+- The game's asset index (Pagoda-Windows.utoc directory index, readable) has
+  `/Game/Pagoda/Characters/Common/Effects/GE_Die` and `GE_Damage_SetByCaller`, plus
+  `/Game/Pagoda/Environment/Common/Volumes/BP_Volume_Death`. The kill now applies GE_Die through
+  `PagodaCombatFunctionLibrary:ApplySetByCallerEffect`, then GE_Damage_SetByCaller x9999 (tag read from its CDO).
 - Processes started by Claude (the Claude desktop app is MSIX-packaged) see a redirected
   `%LOCALAPPDATA%`. The game can't see that copy. For playtests, start the AP server/client through
   `playtest\Start-Server.bat` / `Start-Client.bat` via explorer.exe, or have the user start them.

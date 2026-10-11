@@ -14,7 +14,6 @@ local SUBSYSTEM = "/Script/Pagoda.PagodaInfiniteDiscoSubsystem"
 local PLAYER_CLASS = "BP_PagodaPlayerCharacter_Charlie_C"
 local PLAYER = "/Game/Pagoda/Characters/Player/BP_PagodaPlayerCharacter_Charlie.BP_PagodaPlayerCharacter_Charlie_C"
 local CONTROLLER_CLASS = "BP_PagodaPlayerController_C"
-local COMBAT_LIBRARY = "/Script/Pagoda.PagodaCombatFunctionLibrary"
 
 local TICK_MS = 250
 local STATUS_EVERY_TICKS = 4
@@ -346,33 +345,60 @@ end
 -- DeathLink kill
 ---------------------------------------------------------------------------------------------
 
--- The first time an enemy damages the player, remember how the game applied it, so a
--- DeathLink can apply a lethal hit the same way.
-local learned_damage = nil -- {effect = UClass, tag = string, sign = 1 or -1}
-local damage_samples_logged = 0
+-- The game's own effects, found in its asset index (Characters/Common/Effects).
+local GE_DIE = "/Game/Pagoda/Characters/Common/Effects/GE_Die.GE_Die_C"
+local GE_DAMAGE = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.GE_Damage_SetByCaller_C"
+local GE_DAMAGE_CDO = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.Default__GE_Damage_SetByCaller_C"
+local FALLBACK_DAMAGE_TAG = "SetByCaller.Damage"
+
 local pending_kill = nil -- {stage, at}
 local last_death_at = -100
 
-local function lethal_learned_hit()
-    if not learned_damage then error("no enemy hit seen yet this session") end
+local function load_class(path)
+    local class = StaticFindObject(path)
+    if valid(class) then return class end
+    local package = path:match("^(.-)%.")
+    for _, name in ipairs({path, package}) do
+        pcall(LoadAsset, name)
+        class = StaticFindObject(path)
+        if valid(class) then return class end
+    end
+    error("could not load " .. path)
+end
+
+-- Read the SetByCaller tag GE_Damage_SetByCaller expects from its defaults, so we don't have to guess.
+local damage_tag = nil
+local function find_damage_tag()
+    if damage_tag then return damage_tag end
+    load_class(GE_DAMAGE)
+    local ok, tag = pcall(function()
+        local defaults = StaticFindObject(GE_DAMAGE_CDO)
+        return defaults.Modifiers[1].ModifierMagnitude.SetByCallerMagnitude.DataTag.TagName:ToString()
+    end)
+    if ok and type(tag) == "string" and tag ~= "" and tag ~= "None" then
+        damage_tag = tag
+    else
+        damage_tag = FALLBACK_DAMAGE_TAG
+        log("could not read the damage tag (" .. tostring(tag) .. "); using " .. FALLBACK_DAMAGE_TAG)
+    end
+    log("damage tag: " .. damage_tag)
+    return damage_tag
+end
+
+local function apply_effect_to_player(effect_class, tag, value)
     local library = StaticFindObject("/Script/Pagoda.Default__PagodaCombatFunctionLibrary")
     if not valid(library) then error("combat library not found") end
-    library:ApplySetByCallerEffect(player(), learned_damage.effect,
-        {TagName = FName(learned_damage.tag)}, 99999 * learned_damage.sign)
-end
-
-local function engine_damage()
-    statics():ApplyDamage(player(), 99999, controller(), player(), nil)
-end
-
-local function finish_death()
-    player():FinishDeath()
+    library:ApplySetByCallerEffect(player(), effect_class, {TagName = FName(tag)}, value)
 end
 
 local KILL_STAGES = {
-    {name = "learned enemy hit", run = lethal_learned_hit},
-    {name = "engine ApplyDamage", run = engine_damage},
-    {name = "FinishDeath", run = finish_death},
+    {name = "GE_Die", run = function()
+        apply_effect_to_player(load_class(GE_DIE), FALLBACK_DAMAGE_TAG, 1)
+    end},
+    {name = "GE_Damage_SetByCaller x9999", run = function()
+        local tag = find_damage_tag()
+        apply_effect_to_player(load_class(GE_DAMAGE), tag, 9999)
+    end},
 }
 
 local function try_kill_stage(stage)
@@ -386,7 +412,7 @@ local function try_kill_stage(stage)
     pending_kill = {stage = stage, at = os.time()}
     local ok, err = pcall(definition.run)
     if ok then
-        log("kill stage " .. stage .. " (" .. definition.name .. ") called")
+        log("kill stage " .. stage .. " (" .. definition.name .. ") applied")
     else
         log("kill stage " .. stage .. " (" .. definition.name .. ") error: " .. tostring(err))
         pending_kill.at = -100 -- move on next tick
@@ -394,6 +420,7 @@ local function try_kill_stage(stage)
 end
 
 local function request_kill(source)
+    if pending_kill then return end -- one attempt at a time
     if not in_run() or not valid(player()) then
         emit({type = "kill_failed", reason = "not_in_run"})
         return
@@ -407,37 +434,15 @@ local function on_player_death()
     if now - last_death_at < 3 then return end
     last_death_at = now
     if pending_kill then
-        emit_log("DeathLink kill worked with method " .. pending_kill.stage .. " (" .. KILL_STAGES[pending_kill.stage].name .. ")")
+        if now - pending_kill.at <= KILL_STAGE_SECONDS then
+            emit_log("DeathLink kill worked with method " .. pending_kill.stage .. " (" .. KILL_STAGES[pending_kill.stage].name .. ")")
+        end
         pending_kill = nil
     end
     run.dead = true
     run.active = false
     end_effect("player_died")
     emit({type = "death", round = run.round, cleared = run.cleared})
-end
-
-local function on_damage_effect(target, effect, tag, value)
-    local target_object = target:get()
-    if not valid(target_object) then return end
-    local target_name = target_object:GetFullName()
-    local effect_class = effect:get()
-    local effect_name = valid(effect_class) and effect_class:GetFullName() or "?"
-    local tag_name = "?"
-    pcall(function() tag_name = tag:get().TagName:ToString() end)
-    local amount = value:get()
-    if damage_samples_logged < 12 then
-        damage_samples_logged = damage_samples_logged + 1
-        log(string.format("damage sample: target=%s effect=%s tag=%s value=%s",
-            target_name, effect_name, tag_name, tostring(amount)))
-    end
-    -- This function also sets things like attack range and the music-sync meter, so only
-    -- learn from effects that are explicitly about damage.
-    local is_damage = (effect_name .. " " .. tag_name):lower():find("damage", 1, true) ~= nil
-    if not learned_damage and is_damage and target_name:find(PLAYER_CLASS, 1, true) and valid(effect_class)
-        and tag_name ~= "?" and type(amount) == "number" and amount ~= 0 then
-        learned_damage = {effect = effect_class, tag = tag_name, sign = amount > 0 and 1 or -1}
-        emit_log("learned how enemies damage you: " .. effect_name .. " / " .. tag_name)
-    end
 end
 
 ---------------------------------------------------------------------------------------------
@@ -475,8 +480,6 @@ local HOOKS = {
     {path = SUBSYSTEM .. ":NotifyEnemyKilled", native = true,
      callback = function() pending_kills = pending_kills + 1 end},
     {path = PLAYER .. ":OnDeathStartedDelegate_Event", callback = function() on_player_death() end},
-    {path = COMBAT_LIBRARY .. ":ApplySetByCallerEffect", native = true, pre = true,
-     callback = function(_, target, effect, tag, value) on_damage_effect(target, effect, tag, value) end},
 }
 
 local registered = {} -- path -> address of the UFunction we hooked
@@ -529,7 +532,7 @@ local function write_status()
         version = VERSION, session = session, t = os.time(), in_run = in_run(),
         round = run.round, cleared = run.cleared, dead = run.dead,
         effect = active_effect and active_effect.key or nil,
-        learned_damage = learned_damage ~= nil,
+        kill_pending = pending_kill ~= nil,
     }))
     file:close()
 end
@@ -537,9 +540,9 @@ end
 local tick_count = 0
 
 local function status_line()
-    return string.format("status: ticks=%d bridge=%s in_run=%s round=%d cleared=%d dead=%s effect=%s learned_damage=%s hooks=%d",
+    return string.format("status: ticks=%d bridge=%s in_run=%s round=%d cleared=%d dead=%s effect=%s damage_tag=%s hooks=%d",
         tick_count, tostring(bridge_ready), tostring(in_run()), run.round, run.cleared, tostring(run.dead),
-        active_effect and active_effect.key or "none", tostring(learned_damage ~= nil),
+        active_effect and active_effect.key or "none", tostring(damage_tag),
         (function() local n = 0 for _ in pairs(registered) do n = n + 1 end return n end)())
 end
 

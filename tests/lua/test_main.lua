@@ -64,10 +64,9 @@ Key = {F5 = "F5", F6 = "F6", F7 = "F7", F8 = "F8", F9 = "F9", F10 = "F10", F11 =
 ModifierKey = {CONTROL = "CTRL"}
 function FName(text) return {name = text} end
 
-local statics = object("Default__GameplayStatics", {dilation = 1.0, damage_calls = 0})
+local statics = object("Default__GameplayStatics", {dilation = 1.0})
 function statics:SetGlobalTimeDilation(_, speed) self.dilation = speed end
 function statics:GetGlobalTimeDilation() return self.dilation end
-function statics:ApplyDamage() self.damage_calls = self.damage_calls + 1 end
 functions["/Script/Engine.Default__GameplayStatics"] = statics
 local library = object("Default__PagodaCombatFunctionLibrary", {calls = {}})
 function library:ApplySetByCallerEffect(target, effect, tag, value)
@@ -132,7 +131,6 @@ local charlie = object("BP_PagodaPlayerCharacter_Charlie_C /Game/Level.Persisten
 local camera = object("PlayerCameraManager", {fades = {}})
 function camera:StartCameraFade(from, to) self.fades[#self.fades + 1] = {from, to} end
 local pc = object("BP_PagodaPlayerController_C /Game/Level.PersistentLevel.PC_1", {PlayerCameraManager = camera})
-function charlie:FinishDeath() self.finished = true end
 world.BP_PagodaGameState_InfiniteDisco_C = state
 world.BP_PagodaPlayerCharacter_Charlie_C = charlie
 world.BP_PagodaPlayerController_C = pc
@@ -186,23 +184,23 @@ tick(1)
 local failed = events_of("effect_failed")
 check(#failed == 1 and failed[1].reason == "unknown effect", "unknown effect reported as failed")
 
--- Non-damage uses of the same function (seen live: attack range on the player) are not learned.
-local range_effect = object("BlueprintGeneratedClass /Game/GE_PlayerAttackTargetingRange_SetByCaller_Override_C")
-hooks["/Script/Pagoda.PagodaCombatFunctionLibrary:ApplySetByCallerEffect"](
-    param(library), param(charlie), param(range_effect), param({TagName = {ToString = function() return "SetByCaller.AttackRange" end}}), param(450))
-tick(4)
-check(read_status().learned_damage == false, "attack-range effect is not mistaken for damage")
-
--- Learn enemy damage, then a DeathLink kill uses it.
-local damage_effect = object("BlueprintGeneratedClass /Game/GE_Damage.GE_Damage_C")
-hooks["/Script/Pagoda.PagodaCombatFunctionLibrary:ApplySetByCallerEffect"](
-    param(library), param(charlie), param(damage_effect), param({TagName = {ToString = function() return "Data.Damage" end}}), param(12))
+-- DeathLink kill: GE_Die first, applied to the player through the combat library.
+local GE_DIE = "/Game/Pagoda/Characters/Common/Effects/GE_Die.GE_Die_C"
+local GE_DAMAGE = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.GE_Damage_SetByCaller_C"
+local GE_DAMAGE_CDO = "/Game/Pagoda/Characters/Common/Effects/GE_Damage_SetByCaller.Default__GE_Damage_SetByCaller_C"
+functions[GE_DIE] = object(GE_DIE)
+functions[GE_DAMAGE] = object(GE_DAMAGE)
+functions[GE_DAMAGE_CDO] = object(GE_DAMAGE_CDO, {Modifiers = {{ModifierMagnitude = {SetByCallerMagnitude =
+    {DataTag = {TagName = {ToString = function() return "SetByCaller.Health.Damage" end}}}}}}})
 command({type = "kill", source = "Friend"})
+command({type = "kill", source = "Friend again"})
 tick(1)
-check(#library.calls == 1 and library.calls[1].value == 99999 and library.calls[1].tag.TagName.name == "Data.Damage",
-    "kill applies a lethal hit using the learned damage effect")
+check(#library.calls == 1 and library.calls[1].effect == functions[GE_DIE] and library.calls[1].target == charlie,
+    "kill applies GE_Die to the player, once even if asked twice")
 hooks[PLAYER .. ":OnDeathStartedDelegate_Event"](param(charlie))
 tick(4)
+local credits = events_of("log")
+check(credits[#credits].text:find("method 1 (GE_Die)", 1, true) ~= nil, "GE_Die credited for the death")
 check(#events_of("death") == 1, "death event emitted")
 check(camera.fades[#camera.fades][2] == 0.0, "death reverts blackout")
 check(read_status().in_run == false, "not in_run after death")
@@ -222,18 +220,20 @@ local last_wave = events_of("wave")
 check(last_wave[#last_wave].wave == 1, "new run reports wave 1 again")
 check(read_status().cleared == 1, "status cleared resets per run")
 
--- Kill fallback: no learned damage path -> engine damage -> FinishDeath.
+-- Kill fallback: if GE_Die doesn't kill within 3s, apply GE_Damage_SetByCaller with the tag read from its defaults.
 command({type = "kill"})
 tick(1)
-check(#library.calls == 2, "kill stage 1 tried learned hit again")
+check(#library.calls == 2 and library.calls[2].effect == functions[GE_DIE], "kill stage 1 applies GE_Die")
 local t = os.time() + 4
 while os.time() < t do end
 tick(1)
-check(statics.damage_calls == 1, "kill stage 2 tries engine ApplyDamage")
+local last = library.calls[3]
+check(last and last.effect == functions[GE_DAMAGE] and last.value == 9999 and last.tag.TagName.name == "SetByCaller.Health.Damage",
+    "kill stage 2 applies GE_Damage_SetByCaller x9999 with the tag from its defaults")
 t = os.time() + 4
 while os.time() < t do end
 tick(1)
-check(charlie.finished == true, "kill stage 3 calls FinishDeath")
+check(#events_of("kill_failed") == 1, "kill_failed reported when nothing worked")
 
 -- Client restart truncates the command file; ids restart from 1 under a new session.
 local file = io.open(bridge .. "commands.jsonl", "wb")
