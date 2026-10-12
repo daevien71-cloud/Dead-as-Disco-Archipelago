@@ -1,6 +1,7 @@
-# Dead as Disco – Archipelago mod: project notes
+# Dead as Disco – Archipelago mod: history and research log
 
-Notes so a new Claude session can pick up where we left off.
+Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
+[AGENTS.md](AGENTS.md).
 
 ## Decisions (2026-10-11)
 
@@ -14,9 +15,9 @@ Notes so a new Claude session can pick up where we left off.
   only while in a run. Both are YAML options.
 - Traps that mess with time are welcome; the owner is patient and fine with downsides.
 
-## Status
+## Initial build (2026-10-11)
 
-Built v0.1.0 (APWorld + client + UE4SS Lua mod + installer). Tested offline only:
+Built v0.1.0 (APWorld + client + UE4SS Lua mod + installer). First tested offline:
 - Lua mod against a fake UE4SS API: `tests/lua/test_main.lua` (31 checks).
 - World + tracker unit tests (37), AP 0.6.9 general world tests, generation from the packaged .apworld.
 - End-to-end: real AP server, two clients, fake games (`tests/e2e/run_e2e.py`).
@@ -80,8 +81,9 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   widget tree is replaced by a canvas + TextBlock) and is rebuilt after level changes. Item messages from the
   client ("You found your Molasses Trap") and the mod's own effect announcements both show.
 - Client bug found and fixed: `CommonContext.seed_name` stays None for clients in AP 0.6.7 and 0.6.9, so
-  progress went to `state/None_<team>_<slot>.json`. The client now takes the seed name from RoomInfo and
-  migrates the old file.
+  progress went to `state/None_<team>_<slot>.json`. The client now takes the seed name from RoomInfo.
+  (A one-time migration of the old file was removed on 2026-10-12: it could carry old kills into any new
+  multiworld.)
 - When reading bridge files from Claude's tools, delete the stale redirected copy under
   `AppData\Local\Packages\Claude_*\LocalCache\Local\DeadAsDiscoAP` first, or you read old data.
 
@@ -93,31 +95,21 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
   moving to a new port keeps its progress.
 - `/testdeathlink [name]` in the client bounces a fake DeathLink to your own slot only (no DeathLink tag,
   `slots=[own]`), so it can't reach friends; the client then rolls/shields/kills like a real one.
-- `Update.bat` / `Update-Linux.sh`: git pull in a clone, otherwise download the branch zip from GitHub (needs
-  the repo to be public; it's private as of 2026-10-11, so the download returns 404).
+- `Update.bat` / `Update-Linux.sh`: git pull in a clone, otherwise download the branch zip from GitHub. The
+  repo went public on 2026-10-11 (commit emails moved to the GitHub no-reply address first) and was renamed from
+  `test` to `Dead-as-Disco-Archipelago`, default branch `ClaudeGPT-coded` → `main`. Update works on both PCs.
 - Owner's Pyroette (Vermillion Dance boss ability, `BP_BossAbility_VermillionDance_Pyroette`, anim
   `A_AI_Pyroette_Spin`) spins too fast with their model mod. A separate UE4SS mod `DaevienPyroetteSpin`
   (kept OUT of this repo at `Documents\DaevienPyroetteSpin`, zip on the Desktop) slows that actor's mesh
-  animation, rotating movement and spin variables to 1%. Not yet tried in-game.
+  animation, rotating movement and spin variables to 1%; confirmed working. v2 also holds her `BeatsSeen`
+  counter for 5 s to keep her on the field longer and logs her config/functions; not yet tried in-game.
 
-## First live test checklist
+## Playtest checklist (current build)
 
-1. Run `Install.bat` (game closed). Start the game; check `...\Win64\ue4ss\UE4SS.log` for
-   `[DeadAsDiscoAP] hooked ...` lines (8 expected over time) and no crash.
-2. Start an Arcade run. Press Ctrl+Home: status line should say in_run=true and the wave number.
-3. Try Ctrl+F5..F9 one at a time: slow-mo, fast-forward, molasses, blackout, fever. Note which visibly work.
-4. Get hit by an enemy once: log should say `learned how enemies damage you`. (If not, the damage hook
-   isn't seeing hits and DeathLink falls back to other kill methods.)
-5. Ctrl+F10 (test kill): log says which kill method worked, or `every method was tried`.
-6. Solo seed: generate with the YAML template, host locally, connect the client, clear a few waves,
-   confirm checks appear. Then a death with DeathLink at 100% send to see it go out.
+1. With the game closed, run Update (or Install). Start the game: `ue4ss/UE4SS.log` should show
+   `[DeadAsDiscoAP] hooked ...` for 7 functions, `main loop running` and `bridge open`.
+2. The Dead as Disco Client says "Dead as Disco detected." Ctrl+Home in the game shows the status pop-up.
+3. In an Arcade run: clear a few waves (checks + pop-ups), `/testeffect slowmo`, `/testdeathlink`.
+4. Read both logs afterwards: `UE4SS.log` and Archipelago's `logs/DeadAsDiscoClient_*.txt`.
 
-Unknowns to watch: whether wave numbers keep counting past song changes; whether time dilation
-breaks beat timing badly (fun) or entirely (needs tuning); which kill method works.
-
-## Ideas not built yet
-
-- Item-arrival pop-ups in the game (no in-game text yet; the client window shows everything).
-- Songs/arenas/moves as items (move locking failed in the earlier research; needs a different approach).
-- More traps: enemy surge, fashion disaster, hiding the beat indicator.
-- Combo-based checks.
+Ideas for later live in AGENTS.md under "Next".

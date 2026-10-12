@@ -41,6 +41,9 @@ Archipelago server ── apworld/dead_as_disco/client.py (runs inside the Archi
 
 ## Develop
 
+Working on this, alone or with an AI assistant? Start with [AGENTS.md](AGENTS.md): current status, layout,
+conventions and what's next. [NOTES.md](NOTES.md) has the history and research.
+
 ```
 python build.py                      # dist/ release zip + dead_as_disco.apworld (commit the latter)
 lua tests/lua/test_main.lua <repo>   # mod tests against a fake UE4SS (set LOCALAPPDATA to a temp dir)
