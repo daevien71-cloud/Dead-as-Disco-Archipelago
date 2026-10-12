@@ -87,6 +87,10 @@ Confirmed live in October 2026 with UE4SS 3.0.1-1164 on game build sha256 811571
 
 - Incoming DeathLink confirmed in the real game via `/testdeathlink` (2026-10-11). The Pyroette spin fix works
   (she now stands still). Ctrl+F11 also toggles the game's fullscreen, so the status hotkey is Ctrl+Home.
+- First real session with friends (2026-10-12): joining a new multiworld before starting the game sent kill/wave
+  checks from the previous session's events.jsonl. Fixed: a slot's first connect on a machine skips the existing
+  log, and a restarted game is detected by its hello session. Progress is keyed by seed/team/slot, so a room
+  moving to a new port keeps its progress.
 - `/testdeathlink [name]` in the client bounces a fake DeathLink to your own slot only (no DeathLink tag,
   `slots=[own]`), so it can't reach friends; the client then rolls/shields/kills like a real one.
 - `Update.bat` / `Update-Linux.sh`: git pull in a clone, otherwise download the branch zip from GitHub (needs
