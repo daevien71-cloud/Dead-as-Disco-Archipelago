@@ -8,6 +8,7 @@ Usage: python run_e2e.py <Archipelago source dir with worlds/dead_as_disco insta
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -116,21 +117,34 @@ Dead as Disco:
         return proc
 
     def seen(name: str, text: str) -> bool:
-        return any(text in line for line in logs[name])
+        # Client output is coloured; match against the plain text.
+        return any(text in re.sub(r"\x1b\[[0-9;]*m", "", line) for line in logs[name])
 
     try:
         start("server", ["MultiServer.py", "--port", str(PORT), "--host", "127.0.0.1", str(archive)])
         wait_for(lambda: seen("server", "Hosting game"), "server start")
-        game_a, game_b = FakeGame(work / "bridge_a"), FakeGame(work / "bridge_b")
+        # A's game isn't running yet, and its event log still holds yesterday's session: 600 kills, wave 40.
+        bridge_a = work / "bridge_a"
+        bridge_a.mkdir()
+        (bridge_a / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in [
+            {"type": "hello", "session": "yesterday"}, {"type": "kill", "count": 600, "seq": 1},
+            {"type": "wave", "wave": 40, "seq": 2}]))
+        game_b = FakeGame(work / "bridge_b")
         launch = "from worlds.dead_as_disco.client import launch; import sys; launch(*sys.argv[1:])"
         start("a", ["-c", launch, "--nogui", "--connect", f"127.0.0.1:{PORT}", "--name", "DiscoDae",
-                    "--bridge-dir", str(game_a.dir)])
+                    "--bridge-dir", str(bridge_a)])
         start("b", ["-c", launch, "--nogui", "--connect", f"127.0.0.1:{PORT}", "--name", "DiscoFriend",
                     "--bridge-dir", str(game_b.dir)])
         wait_for(lambda: seen("a", "Goal: collect 1 Gold Records") and seen("b", "Goal:"), "both clients connected")
-        wait_for(lambda: any((game_a.dir / "state").glob("*_0_1.json")), "client saves progress")
-        assert not any((game_a.dir / "state").glob("None_*")), "progress saved without a seed name"
+        wait_for(lambda: any((bridge_a / "state").glob("*_0_1.json")), "client saves progress")
+        assert not any((bridge_a / "state").glob("None_*")), "progress saved without a seed name"
         print("PASS clients connect and read slot data")
+
+        wait_for(lambda: seen("a", "New multiworld: kills and waves count from zero"), "fresh-start notice")
+        time.sleep(2)
+        assert not seen("a", "(Arcade - "), "events from before joining this multiworld were counted"
+        game_a = FakeGame(bridge_a)  # now the game starts; real play must count
+        print("PASS a new multiworld ignores waves and kills from before you joined")
 
         # Traps wait for a run, then fire.
         time.sleep(1.5)

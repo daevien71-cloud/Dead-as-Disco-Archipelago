@@ -90,6 +90,25 @@ class GameBridge:
             stream.flush()
         return command["id"]
 
+    def _file_session(self) -> Optional[str]:
+        """The game session that wrote the events file (from its first line, the game's hello)."""
+        try:
+            with self.events_path.open("rb") as stream:
+                event = json.loads(stream.readline(1024).decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            return None
+        return event.get("session") if isinstance(event, dict) and event.get("type") == "hello" else None
+
+    def skip_existing_events(self) -> None:
+        """Treat everything already in the events file as handled. Used when joining a multiworld for the first
+        time: those waves and kills happened before you joined it."""
+        try:
+            self._events_offset = self.events_path.stat().st_size
+        except FileNotFoundError:
+            self._events_offset = 0
+        self._partial = b""
+        self._game_session = self._file_session()
+
     def read_events(self) -> Iterator[dict[str, Any]]:
         """New events since the last call. Each carries the game session it came from as
         "game_session", so callers can skip events they already handled before a restart."""
@@ -97,8 +116,10 @@ class GameBridge:
             size = self.events_path.stat().st_size
         except FileNotFoundError:
             return
-        if size < self._events_offset:
-            # The game restarted and truncated the file.
+        file_session = self._file_session()
+        if size < self._events_offset or (self._events_offset and self._game_session and file_session
+                                           and file_session != self._game_session):
+            # The game restarted and rewrote the file (checked by session too, in case it already grew back).
             self._events_offset, self._partial = 0, b""
         if size == self._events_offset:
             return

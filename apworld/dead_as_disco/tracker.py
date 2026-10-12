@@ -79,6 +79,8 @@ class Tracker:
 
     def __post_init__(self) -> None:
         self.state = SavedState()
+        # No saved progress means this is the first time this slot of this multiworld is played here.
+        self.is_new = not (self.state_path and self.state_path.exists())
         if self.state_path and self.state_path.exists():
             try:
                 saved = json.loads(self.state_path.read_text(encoding="utf-8"))

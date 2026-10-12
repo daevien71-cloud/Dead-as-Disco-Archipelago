@@ -54,6 +54,12 @@ class TrackerTest(unittest.TestCase):
         result = self.event(t, 2, type="kill", count=5)
         self.assertEqual(result["locations"], [KILL_LOCATIONS[kill_location_name(25)]])
 
+    def test_is_new_only_without_saved_progress(self) -> None:
+        t = self.make()
+        self.assertTrue(t.is_new)
+        t.save()
+        self.assertFalse(Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append).is_new)
+
     def test_kills_persist_across_restarts(self) -> None:
         t = self.make()
         self.event(t, 1, type="kill", count=30)

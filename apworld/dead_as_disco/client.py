@@ -109,10 +109,12 @@ class DeadAsDiscoContext(CommonContext):
             settings = Settings.from_slot_data(args.get("slot_data") or {})
             state_dir = self.bridge.directory / "state"
             state_path = state_dir / f"{self.room_seed_name}_{self.team}_{self.slot}.json"
-            unnamed = state_dir / f"None_{self.team}_{self.slot}.json"  # written by v0.1.0 before this fix
-            if not state_path.exists() and unnamed.exists():
-                unnamed.replace(state_path)
             self.tracker = Tracker(settings, state_path, log=logger.info, notify=self.popup)
+            if self.tracker.is_new:
+                # Waves and kills already in the game's event log are from before you joined this multiworld.
+                self.bridge.skip_existing_events()
+                self.tracker.save()
+                logger.info("New multiworld: kills and waves count from zero.")
             self.tracker.set_received([item.item for item in self.items_received])
             self.last_status_cleared = 0
             Utils.async_start(self.update_death_link(settings.death_link))
