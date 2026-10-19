@@ -28,6 +28,7 @@ class FakeGame:
         self.cleared = 0
         self.commands_seen: list[dict] = []
         self.meteor_command: dict | None = None
+        self.car_command: dict | None = None
         self.offset = 0
         self.stop = threading.Event()
         (self.dir / "events.jsonl").write_text(json.dumps({"type": "hello", "session": "fake"}) + "\n")
@@ -43,9 +44,10 @@ class FakeGame:
         while not self.stop.is_set():
             (self.dir / "status.json").write_text(json.dumps(
                 {"t": time.time(), "in_run": self.in_run, "round": self.cleared + 1, "cleared": self.cleared,
-                 "effects": ["slowmo", "fastforward", "molasses", "blackout", "fever", "meteor"],
-                 "meteor_ready": self.in_run and self.meteor_command is None,
-                 "effect": "meteor" if self.meteor_command else ""}))
+                 "effects": ["slowmo", "fastforward", "molasses", "blackout", "fever", "meteor", "cars"],
+                 "meteor_ready": self.in_run and self.meteor_command is None and self.car_command is None,
+                 "cars_ready": self.in_run and self.meteor_command is None and self.car_command is None,
+                 "effect": "meteor" if self.meteor_command else ("cars" if self.car_command else "")}))
             path = self.dir / "commands.jsonl"
             if path.exists():
                 data = path.read_bytes()
@@ -62,6 +64,9 @@ class FakeGame:
             if command["effect"] == "meteor":
                 self.meteor_command = command
                 self.emit(type="effect_start", effect="meteor", command_id=command["id"], meteor_count=5)
+            elif command["effect"] == "cars":
+                self.car_command = command
+                self.emit(type="effect_start", effect="cars", command_id=command["id"], car_sets=2, cars_per_set=3)
             else:
                 self.emit(type="effect_start", effect=command["effect"], command_id=command["id"])
                 self.emit(type="effect_end", effect=command["effect"], command_id=command["id"], reason="expired")
@@ -73,6 +78,12 @@ class FakeGame:
         command, self.meteor_command = self.meteor_command, None
         assert command is not None
         self.emit(type="effect_end", effect="meteor", command_id=command["id"], meteor_count=5, reason="native_finished")
+
+    def finish_cars(self) -> None:
+        command, self.car_command = self.car_command, None
+        assert command is not None
+        self.emit(type="effect_end", effect="cars", command_id=command["id"], car_sets=2, cars_per_set=3,
+                  reason="native_finished")
 
 
 def wait_for(predicate, what: str, timeout: float = 20) -> None:
@@ -100,7 +111,7 @@ Dead as Disco:
   death_link_send_chance: 100
   death_link_receive_chance: 100
   effect_duration: 5
-  start_inventory: {Gold Record: 1, Slow-Mo Trap: 1, Meteor Trap: 1, Blackout Trap: 1}
+  start_inventory: {Gold Record: 1, Slow-Mo Trap: 1, Meteor Trap: 1, Prophet Car Trap: 1, Blackout Trap: 1}
 """)
     (players / "b.yaml").write_text("""name: DiscoFriend
 game: Dead as Disco
@@ -176,6 +187,7 @@ Dead as Disco:
         # 3-second dispatch gap. A queued Blackout must wait through the whole batch, even after restart.
         state_path = next((bridge_a / "state").glob("*_0_1.json"))
         time.sleep(24)
+        assert not any(c.get("effect") == "cars" for c in game_a.commands_seen), "cars interrupted meteor batch"
         assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "Blackout interrupted batch"
         state = json.loads(state_path.read_text())
         assert state["effects_done"] == 2 and state["pending_meteor"]["consumed"], state
@@ -187,14 +199,41 @@ Dead as Disco:
         wait_for(lambda: sum("Goal: collect" in line for line in logs["a"]) > connections, "A reconnected mid-batch")
         time.sleep(1)
         assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "restart replayed batch"
+        assert not any(c.get("effect") == "cars" for c in game_a.commands_seen), "restart overlapped native batches"
         assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "restart interrupted batch"
         game_a.finish_meteor()
         wait_for(lambda: seen("a", "Meteor Trap wore off"), "meteor item completed")
         assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "meteor repeated"
         state = json.loads(state_path.read_text())
         assert state["effects_done"] == 2, state
-        wait_for(lambda: any(c.get("effect") == "blackout" for c in game_a.commands_seen), "next trap after batch")
+        wait_for(lambda: any(c.get("effect") == "cars" for c in game_a.commands_seen), "cars after meteor batch")
         print("PASS five-meteor batch survives watchdog and client restart, consumes one item, then releases queue")
+
+        wait_for(lambda: seen("a", "Prophet Car Trap is active"), "two-set car trap started")
+        # Both sets and the wait between them stay one active effect. Hold it beyond the ordinary
+        # watchdog, then restart the client to verify the same journal protects cars and meteors.
+        time.sleep(24)
+        assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "Blackout interrupted cars"
+        state = json.loads(state_path.read_text())
+        assert state["effects_done"] == 3 and state["pending_meteor"]["effect"] == "cars", state
+        assert state["pending_meteor"]["consumed"], state
+        connections = sum("Goal: collect" in line for line in logs["a"])
+        client_a.stdin.write("/exit\n")
+        client_a.stdin.flush()
+        client_a.wait(timeout=10)
+        client_a = start("a", args_a)
+        wait_for(lambda: sum("Goal: collect" in line for line in logs["a"]) > connections, "A reconnected during cars")
+        time.sleep(1)
+        assert sum(c.get("effect") == "cars" for c in game_a.commands_seen) == 1, "restart replayed car trap"
+        assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "restart interrupted cars"
+        game_a.finish_cars()
+        wait_for(lambda: seen("a", "Prophet Car Trap wore off"), "car trap completed")
+        state = json.loads(state_path.read_text())
+        assert state["effects_done"] == 3 and state["pending_meteor"] is None, state
+        assert sum(c.get("effect") == "cars" for c in game_a.commands_seen) == 1, "car trap repeated"
+        assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "earlier meteor repeated"
+        wait_for(lambda: any(c.get("effect") == "blackout" for c in game_a.commands_seen), "next trap after cars")
+        print("PASS two-set car trap survives watchdog and client restart, consumes one item, then releases queue")
 
         # Waves and kills send checks; clearing the goal wave with a Gold Record finishes.
         game_a.emit(type="wave", wave=10)

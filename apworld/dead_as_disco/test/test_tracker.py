@@ -1,3 +1,4 @@
+import json
 import random
 import tempfile
 import unittest
@@ -5,7 +6,7 @@ from pathlib import Path
 
 from ..data import (
     BLACKOUT_TRAP, DISCO_FEVER, GOLD_RECORD, ITEM_NAME_TO_ID, KILL_LOCATIONS, METEOR_TRAP, MIRROR_BALL_SHIELD,
-    SLOW_MO_TRAP, WAVE_LOCATIONS, kill_location_name, wave_location_name,
+    PROPHET_CAR_TRAP, SLOW_MO_TRAP, WAVE_LOCATIONS, kill_location_name, wave_location_name,
 )
 from ..tracker import Settings, Tracker
 
@@ -13,6 +14,13 @@ from ..tracker import Settings, Tracker
 def meteor_status(ready: bool = True, active: bool = False) -> dict:
     return {"effects": ["slowmo", "fastforward", "molasses", "blackout", "fever", "meteor"],
             "meteor_ready": ready, "effect": "meteor" if active else "", "in_run": True}
+
+
+def cars_status(ready: bool = True, active: bool = False) -> dict:
+    status = meteor_status()
+    status["effects"].append("cars")
+    status.update(cars_ready=ready, effect="cars" if active else "")
+    return status
 
 
 class FakeClock:
@@ -419,3 +427,230 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(t.state.effects_done, 0)
         self.event(t, 2, type="effect_end", command_id=1)
         self.assertEqual(t.state.effects_done, 1)
+
+    def test_cars_wait_for_capability_and_readiness_preserving_fifo(self) -> None:
+        t = self.make()
+        t.set_received(ids(PROPHET_CAR_TRAP, METEOR_TRAP, BLACKOUT_TRAP))
+        for status in (None, {"in_run": True}, meteor_status(), {"effects": "cars"},
+                       {"effects": None}, {"effects": ["cars"]}, cars_status(ready=False)):
+            self.assertIsNone(t.next_effect_to_send(True, status))
+        self.assertEqual(sum("update the game mod" in line for line in self.logs), 1)
+        self.assertEqual(t.state.effects_done, 0)
+        self.assertEqual(t.effect_queue(), [PROPHET_CAR_TRAP, METEOR_TRAP, BLACKOUT_TRAP])
+        self.assertEqual(t.next_effect_to_send(True, cars_status()), (PROPHET_CAR_TRAP, "cars"))
+
+    def test_each_unsupported_native_effect_gets_one_notice(self) -> None:
+        t = self.make()
+        t.set_received(ids(PROPHET_CAR_TRAP, METEOR_TRAP))
+        old = {"in_run": True}
+        t.next_effect_to_send(True, old)
+        t.next_effect_to_send(True, old)
+        t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
+        self.event(t, 1, type="effect_end", command_id=1)
+        self.clock.now += 3
+        t.next_effect_to_send(True, old)
+        t.next_effect_to_send(True, old)
+        self.assertEqual(sum("update the game mod" in line for line in self.logs), 2)
+
+    def test_native_status_serializes_both_traps_and_normal_effects_without_local_pending(self) -> None:
+        for active in ("meteor", "cars"):
+            for queued in (PROPHET_CAR_TRAP, METEOR_TRAP, BLACKOUT_TRAP):
+                with self.subTest(active=active, queued=queued):
+                    t = self.make()
+                    t.set_received(ids(queued))
+                    status = cars_status()
+                    status["effect"] = active
+                    self.clock.now += 3600
+                    self.assertIsNone(t.next_effect_to_send(True, status))
+                    self.assertEqual(t.state.effects_done, 0)
+
+    def test_normal_pending_effect_blocks_cars(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, PROPHET_CAR_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
+        self.event(t, 1, type="effect_start", command_id=1)
+        self.assertIsNone(t.next_effect_to_send(True, cars_status()))
+        self.event(t, 2, type="effect_end", command_id=1)
+        self.clock.now += 3
+        self.assertEqual(t.next_effect_to_send(True, cars_status()), (PROPHET_CAR_TRAP, "cars"))
+
+    def test_car_journal_restores_before_ack_and_consumes_two_sets_once(self) -> None:
+        t = self.make(effect_duration=5)
+        received = ids(PROPHET_CAR_TRAP, METEOR_TRAP, BLACKOUT_TRAP)
+        t.set_received(received)
+        t.effect_sent(7, *t.next_effect_to_send(True, cars_status()))
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again.set_received(received)
+        self.assertEqual(again.pending_effect.effect, "cars")
+        self.assertFalse(again.pending_effect.started)
+        self.clock.now += 3600
+        self.assertIsNone(again.next_effect_to_send(True, cars_status(active=True)))
+        self.event(again, 1, type="effect_start", effect="cars", command_id=7, car_sets=2, cars_per_set=3)
+        self.assertEqual(again.state.effects_done, 1)
+        self.assertTrue(again.pending_effect.consumed)
+        during = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        during.set_received(received)
+        self.clock.now += 3600  # includes the gap between the two sets, while the mod still owns cars
+        self.assertIsNone(during.next_effect_to_send(True, cars_status(active=True)))
+        self.event(during, 2, type="effect_start", effect="cars", command_id=7, car_sets=2, cars_per_set=3)
+        self.assertEqual(during.state.effects_done, 1)
+        self.event(during, 3, type="effect_end", effect="cars", command_id=7)
+        self.event(during, 4, type="effect_end", effect="cars", command_id=7)
+        self.assertEqual(during.state.effects_done, 1)
+        after = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        after.set_received(received)
+        self.assertIsNone(after.pending_effect)
+        self.assertEqual(after.effect_queue(), [METEOR_TRAP, BLACKOUT_TRAP])
+        self.clock.now += 3
+        self.assertEqual(during.next_effect_to_send(True, cars_status()), (METEOR_TRAP, "meteor"))
+
+    def test_unrelated_manual_probe_events_cannot_change_pending_ap_car(self) -> None:
+        t = self.make()
+        t.set_received(ids(PROPHET_CAR_TRAP, METEOR_TRAP))
+        t.effect_sent(7, *t.next_effect_to_send(True, cars_status()))
+        pending = t.pending_effect
+        # A manual single-car probe has its own command ID even though it uses the same cars key.
+        events = [("effect_start", None), ("effect_end", "native_finished"),
+                  ("effect_failed", "spawn_failed"), ("effect_failed", "spawn_blocked"),
+                  ("effect_failed", "asset_unavailable"), ("effect_failed", "busy")]
+        for seq, (kind, reason) in enumerate(events, 1):
+            with self.subTest(kind=kind, reason=reason):
+                self.event(t, seq, type=kind, effect="cars", command_id=99, probe=True, reason=reason)
+                t.save()  # the client saves event cursors even when an effect event is unrelated
+                self.assertIs(t.pending_effect, pending)
+                self.assertFalse(pending.started)
+                self.assertFalse(pending.consumed)
+                self.assertEqual(t.state.effects_done, 0)
+                self.assertEqual(t.state.meteor_start_failures, 0)
+                self.assertEqual(t.state.meteor_retry_at, 0)
+                self.assertEqual(t.next_effect_at, 0)
+                self.assertEqual(t.effect_queue(), [PROPHET_CAR_TRAP, METEOR_TRAP])
+                self.assertIsNone(t.next_effect_to_send(True, cars_status()))
+                journal = json.loads(t.state_path.read_text())["pending_meteor"]
+                self.assertEqual(journal["command_id"], 7)
+                self.assertNotIn("probe", journal)
+        self.assertEqual(self.logs, [])  # no retry/skip/failure report for the unrelated probe
+        self.event(t, 7, type="effect_start", effect="cars", command_id=7, car_sets=2, car_count=6)
+        self.assertEqual(t.state.effects_done, 1)
+        self.assertTrue(t.pending_effect.started)
+
+    def test_cars_missing_heartbeat_waits_then_inactive_watchdog_finishes_without_replay(self) -> None:
+        t = self.make(effect_duration=5)
+        t.set_received(ids(PROPHET_CAR_TRAP, BLACKOUT_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
+        self.event(t, 1, type="effect_start", command_id=1)
+        self.clock.now += 3600
+        for status in (cars_status(active=True), None, {}):
+            self.assertIsNone(t.next_effect_to_send(False, status))
+            self.assertIsNotNone(t.pending_effect)
+        fresh = cars_status()
+        fresh["effect"] = None
+        self.assertIsNone(t.next_effect_to_send(True, fresh))
+        self.assertIsNone(t.pending_effect)
+        self.assertEqual(t.state.effects_done, 1)
+        self.clock.now += 3
+        self.assertEqual(t.next_effect_to_send(True, fresh), (BLACKOUT_TRAP, "blackout"))
+
+    def test_car_start_retries_persist_and_third_failure_skips_once(self) -> None:
+        t = self.make()
+        received = ids(PROPHET_CAR_TRAP, METEOR_TRAP)
+        t.set_received(received)
+        for attempt, reason in enumerate(("spawn_blocked", "asset_unavailable", "spawn_failed"), 1):
+            t.effect_sent(attempt, *t.next_effect_to_send(True, cars_status()))
+            self.event(t, attempt, type="effect_failed", command_id=attempt, reason=reason)
+            t = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+            t.set_received(received)
+            if attempt < 3:
+                self.assertIsNone(t.next_effect_to_send(True, cars_status()))
+                self.assertEqual(t.state.effects_done, 0)
+                self.assertEqual(t.state.meteor_start_failures, attempt)
+                self.clock.now += 2.9
+                self.assertIsNone(t.next_effect_to_send(True, cars_status()))
+                self.clock.now += 0.1
+        self.assertEqual(t.state.effects_done, 1)
+        self.assertEqual(t.state.meteor_start_failures, 0)
+        self.assertEqual(t.state.meteor_retry_at, 0)
+        self.event(t, 4, type="effect_failed", command_id=3, reason="spawn_failed")
+        self.assertEqual(t.state.effects_done, 1)
+        self.assertEqual(sum("skipped after 3 failed start attempts" in line for line in self.logs), 1)
+        self.clock.now += 3
+        self.assertEqual(t.next_effect_to_send(True, cars_status()), (METEOR_TRAP, "meteor"))
+
+    def test_native_success_resets_retry_count_before_the_other_native_trap(self) -> None:
+        for first, second in ((PROPHET_CAR_TRAP, METEOR_TRAP), (METEOR_TRAP, PROPHET_CAR_TRAP)):
+            with self.subTest(first=first):
+                t = self.make()
+                t.set_received(ids(first, second))
+                t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
+                self.event(t, 1, type="effect_failed", command_id=1, reason="spawn_failed")
+                self.clock.now += 3
+                t.effect_sent(2, *t.next_effect_to_send(True, cars_status()))
+                self.event(t, 2, type="effect_start", command_id=2)
+                self.event(t, 3, type="effect_end", command_id=2)
+                self.assertEqual(t.state.meteor_start_failures, 0)
+                self.clock.now += 3
+                t.effect_sent(3, *t.next_effect_to_send(True, cars_status()))
+                self.event(t, 4, type="effect_failed", command_id=3, reason="spawn_failed")
+                self.assertEqual(t.state.meteor_start_failures, 1)
+                self.assertEqual(t.state.effects_done, 1)
+
+    def test_car_temporary_failure_keeps_item_without_using_an_attempt(self) -> None:
+        for reason in ("busy", "paused", "airborne", "downtime", "not_in_run"):
+            with self.subTest(reason=reason):
+                t = self.make()
+                t.set_received(ids(PROPHET_CAR_TRAP))
+                t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
+                self.event(t, 1, type="effect_failed", command_id=1, reason=reason)
+                self.assertEqual(t.state.effects_done, 0)
+                self.assertEqual(t.state.meteor_start_failures, 0)
+                self.assertIsNone(t.next_effect_to_send(True, cars_status()))
+                self.clock.now += 3
+                self.assertEqual(t.next_effect_to_send(True, cars_status()), (PROPHET_CAR_TRAP, "cars"))
+
+    def test_started_car_failure_never_retries_or_double_consumes(self) -> None:
+        for reason in ("spawn_failed", "spawn_blocked", "asset_unavailable", "downtime"):
+            with self.subTest(reason=reason):
+                t = self.make()
+                t.set_received(ids(PROPHET_CAR_TRAP, METEOR_TRAP))
+                t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
+                self.event(t, 1, type="effect_start", command_id=1)
+                self.event(t, 2, type="effect_failed", command_id=1, reason=reason)
+                self.assertIsNone(t.pending_effect)
+                self.assertEqual(t.state.effects_done, 1)
+                self.assertEqual(t.state.meteor_start_failures, 0)
+                self.assertFalse(any("retrying" in line for line in self.logs))
+
+    def test_legacy_020_meteor_save_fixture_preserves_progress_pending_and_retry(self) -> None:
+        t = self.make()
+        fixture = Path(__file__).with_name("fixtures") / "meteor-0.2.0.json"
+        saved = json.loads(fixture.read_text())
+        t.state_path.write_text(json.dumps(saved))
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again.set_received(ids(METEOR_TRAP, PROPHET_CAR_TRAP))
+        self.assertEqual(again.state.kills, 30)
+        self.assertEqual(again.state.best_wave, 7)
+        self.assertEqual(again.state.shields_used, 2)
+        self.assertEqual(again.pending_effect.command_id, 41)
+        self.assertTrue(again.pending_effect.consumed)
+        self.assertIsNone(again.next_effect_to_send(True, meteor_status(active=True)))
+        self.event(again, 10, type="effect_end", command_id=41)
+        self.assertEqual(again.state.effects_done, 1)
+        self.assertEqual(again.effect_queue(), [PROPHET_CAR_TRAP])
+        # An old failed-start save has no pending command, but must keep its retry count/deadline.
+        saved.update(effects_done=0, pending_meteor=None, meteor_start_failures=2, meteor_retry_at=1003.0)
+        t.state_path.write_text(json.dumps(saved))
+        retry = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        retry.set_received(ids(METEOR_TRAP))
+        self.assertIsNone(retry.next_effect_to_send(True, meteor_status()))
+        self.clock.now += 3
+        retry.effect_sent(42, *retry.next_effect_to_send(True, meteor_status()))
+        self.event(retry, 10, type="effect_failed", command_id=42, reason="spawn_failed")
+        self.assertEqual(retry.state.effects_done, 1)
+        self.assertTrue(any("skipped after 3 failed start attempts" in line for line in self.logs))
+
+    def test_native_journal_does_not_restore_unrelated_effect(self) -> None:
+        t = self.make()
+        t.state_path.write_text(json.dumps({"pending_meteor": {
+            "command_id": 1, "effect": "blackout", "item_name": BLACKOUT_TRAP, "sent_at": 1000.0}}))
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        self.assertIsNone(again.pending_effect)

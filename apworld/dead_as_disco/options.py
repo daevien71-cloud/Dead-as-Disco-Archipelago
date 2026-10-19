@@ -114,6 +114,11 @@ class EnabledTraps(OptionSet):
     Native base damage is 10 to you and 60 to enemies; the game's normal damage modifiers still apply.
     Enemy kills count toward your usual kill checks. Dying to a meteor uses your normal DeathLink send chance,
     with no extra DeathLink roll or message.
+
+    **Prophet Car Trap (experimental, off by default):** two sets of three native Prophet cars. The second
+    waits until the first set is gone. Both sets use one item and their own time limits, separate from Effect
+    Duration. Player and enemy damage are intended but not yet verified in live Arcade. Native kills and deaths
+    use the usual kill checks and DeathLink chance. Update both the game mod and APWorld before adding it.
     """
     display_name = "Enabled Traps"
     valid_keys = frozenset(TRAPS)
@@ -124,7 +129,8 @@ class EffectDuration(Range):
     """How many seconds the speed/screen traps and each Disco Fever last.
 
     Traps and buffs wait until you're in an Arcade run, then fire one at a time.
-    The experimental Meteor Trap rolls 1–5 meteors and has its own batch time limit; this option does not change it.
+    Meteor Trap (1–5 meteors) and Prophet Car Trap (two sets of three cars) have their own time limits;
+    this option does not change them.
     """
     display_name = "Effect Duration"
     range_start = 5

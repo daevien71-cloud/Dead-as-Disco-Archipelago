@@ -107,18 +107,41 @@ meteor items queued. See `docs/meteor-research.md` for exact hook contracts and 
 - **Checks:** 15 per-run wave milestones (optional every-Nth-wave extras) and up to 14 lifetime-kill checks.
 - **Goal:** collect N Gold Records, then clear the goal wave in one run.
 - **Items:** Gold Records, Disco Fever, Mirror Ball Shield, Groovy Vibes; Slow-Mo, Fast-Forward, Molasses and
-  Blackout (98%) traps, plus the optional Meteor Trap.
+  Blackout (98%) traps, plus the optional Meteor Trap and experimental Prophet Car Trap.
 - **DeathLink:** 25% send / 40% receive (options), only while in a run; shields block one. All confirmed in-game.
 - **On-screen pop-ups:** items sent/received, effects, DeathLink, goal.
 - **Tooling:** one-click install and update (Windows + Linux), plain-language options in the Options Creator.
 - **Last fix:** joining a new multiworld no longer counts kills/waves left over in the event log from earlier
   play.
 
+v0.3.0 is an **offline Prophet Car Trap candidate**, on `codex/prophet-car-trap` from the live-tested
+meteor commit `c8a1e54`. The installed game and APWorld still match v0.2.0. Do not confuse offline
+contract tests with live car proof. Car item 814200106 is off by default, uses two sequential sets of
+three native highway cars, and shares the native effect slot with meteors. `/testeffect car` probes
+one car; `/testeffect cars` requests both sets. Start with the probe in `docs/cars.md`.
+
+`cars.lua` reuses native warning/movement/damage. It measures geometry, freezes collision through
+the warning, resets timing per set, preserves a half-second red warning even after a delayed tick,
+and destroys every owned car and warning before set two. Native actor destruction is checked with
+`IsActorBeingDestroyed` as well as UE4SS validity; UObject memory can remain valid until GC.
+The adapter has no wall/terrain trace. Open, flat arenas come first. See `docs/cars-research.md`.
+
+Saved keys `pending_meteor`, `meteor_start_failures`, and `meteor_retry_at` retain their v0.2.0 names
+but now represent the single native-effect slot for either meteor or cars. Preserve this compatibility.
+Manual probes are isolated by command ID and cannot consume or clear pending AP items.
+
+Offline validation: 84 Python unit tests, 136 main Lua checks, 232 car checks across 73 scenarios,
+267 meteor checks across 51 scenarios, 11 real-server/fake-game E2E checks, 10 updater tests and six
+Linux installer tests passed. Release archive contents and source bytes were verified.
+
 ## Next
 
+- Install the v0.3.0 candidate only when the owner is ready to playtest. Prove one car's warning,
+  movement, floor alignment, player/enemy damage and cleanup, then the two sets and actual AP delivery.
+- Complete car pause, downtime, menu/death/song/arena, reconnect and Linux/Proton checks in `docs/cars.md`.
 - Complete the remaining queued-batch, pause-during-flight, menu/death/song/arena, reconnect and
   Linux/Proton live checks in `docs/meteor.md`.
-- Cars remain a later feature; do not expand this into a generic hazard framework.
+- Keep separate native adapters; do not expand this into a generic hazard framework.
 - Watch long runs: does the wave count survive song changes?
 - More traps: enemy surge, hiding the beat indicator, forced outfit.
 - Songs, arenas or moves as items (move locking failed in early research; needs another approach).

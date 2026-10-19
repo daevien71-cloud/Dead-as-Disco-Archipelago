@@ -3,7 +3,7 @@ from BaseClasses import ItemClassification
 from ..data import (
     BLACKOUT_TRAP, DEFAULT_TRAPS, DISCO_FEVER, FAST_FORWARD_TRAP, GOLD_RECORD, GROOVY_VIBES,
     ITEM_BASE, ITEM_NAME_TO_ID, METEOR_TRAP, MILESTONE_WAVES, MIRROR_BALL_SHIELD, MOLASSES_TRAP,
-    SLOW_MO_TRAP, TRAPS, wave_location_name,
+    PROPHET_CAR_TRAP, SLOW_MO_TRAP, TRAPS, wave_location_name,
 )
 from ..options import EnabledTraps
 from . import DeadAsDiscoTestBase
@@ -15,10 +15,15 @@ class TestDefaults(DeadAsDiscoTestBase):
         self.assertEqual(self.world.options.enabled_traps.value, frozenset(DEFAULT_TRAPS))
         self.assertNotIn(METEOR_TRAP, [item.name for item in self.multiworld.itempool])
 
+    def test_cars_are_opt_in(self) -> None:
+        self.assertIn(PROPHET_CAR_TRAP, EnabledTraps.valid_keys)
+        self.assertEqual(self.world.options.enabled_traps.value, frozenset(DEFAULT_TRAPS))
+        self.assertNotIn(PROPHET_CAR_TRAP, [item.name for item in self.multiworld.itempool])
+
     def test_item_ids_remain_compatible(self) -> None:
         offsets = {GOLD_RECORD: 1, DISCO_FEVER: 2, MIRROR_BALL_SHIELD: 3, GROOVY_VIBES: 4,
                    SLOW_MO_TRAP: 101, FAST_FORWARD_TRAP: 102, MOLASSES_TRAP: 103, BLACKOUT_TRAP: 104,
-                   METEOR_TRAP: 105}
+                   METEOR_TRAP: 105, PROPHET_CAR_TRAP: 106}
         self.assertEqual(ITEM_NAME_TO_ID, {name: ITEM_BASE + offset for name, offset in offsets.items()})
 
     def test_location_count(self) -> None:
@@ -83,4 +88,16 @@ class TestMeteorOnly(DeadAsDiscoTestBase):
         self.assertEqual(sum(item.name == METEOR_TRAP for item in pool), len(pool) - 1)
         self.assertTrue(all(item.classification == ItemClassification.trap
                             for item in pool if item.name == METEOR_TRAP))
+        self.assertEqual(self.world.fill_slot_data()["gold_records_required"], 1)
+
+
+class TestCarsOnly(DeadAsDiscoTestBase):
+    options = {"enabled_traps": [PROPHET_CAR_TRAP], "trap_percentage": 100,
+               "gold_record_count": 1, "gold_records_required": 1}
+
+    def test_car_pool_and_classification(self) -> None:
+        pool = [item for item in self.multiworld.itempool if item.player == self.player]
+        self.assertEqual(sum(item.name == PROPHET_CAR_TRAP for item in pool), len(pool) - 1)
+        self.assertTrue(all(item.classification == ItemClassification.trap
+                            for item in pool if item.name == PROPHET_CAR_TRAP))
         self.assertEqual(self.world.fill_slot_data()["gold_records_required"], 1)

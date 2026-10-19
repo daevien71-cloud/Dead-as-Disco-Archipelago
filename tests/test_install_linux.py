@@ -73,7 +73,9 @@ class InstallLinuxTest(unittest.TestCase):
         out = self.run_in(steam)
         mod = steam.win64 / "ue4ss" / "Mods" / "DeadAsDiscoAP"
         self.assertTrue((steam.win64 / "dwmapi.dll").exists())
-        self.assertTrue((mod / "Scripts" / "main.lua").exists())
+        for script in ("main.lua", "meteor.lua", "cars.lua"):
+            self.assertEqual((mod / "Scripts" / script).read_bytes(),
+                             (ROOT / "mod" / "DeadAsDiscoAP" / "Scripts" / script).read_bytes())
         self.assertEqual((mod / "bridge_dir.txt").read_text(), "C:\\users\\steamuser\\AppData\\Local\\DeadAsDiscoAP")
         mods_txt = (steam.win64 / "ue4ss" / "Mods" / "mods.txt").read_text()
         self.assertIn("DeadAsDiscoAP : 1", mods_txt)

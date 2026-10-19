@@ -1,0 +1,19 @@
+{
+ "kills": 30,
+ "best_wave": 7,
+ "effects_done": 1,
+ "shields_used": 2,
+ "goal_sent": false,
+ "last_event_session": "g1",
+ "last_event_seq": 9,
+ "pending_meteor": {
+  "command_id": 41,
+  "effect": "meteor",
+  "item_name": "Meteor Trap",
+  "sent_at": 900.0,
+  "started": true,
+  "consumed": true
+ },
+ "meteor_start_failures": 0,
+ "meteor_retry_at": 0.0
+}

@@ -22,6 +22,8 @@ against DeathLink.
 - **Meteor Trap (experimental, off by default)**: one item rolls **1–5 Aurora meteors**, arriving one at a time
   with warnings and native remnants. Each targets where you stood when it launched. Update both the game mod
   and APWorld before enabling it.
+- **Prophet Car Trap (experimental, off by default)**: two sets of three native Prophet cars; the second
+  waits until the first set is gone. This v0.3.0 candidate still needs live Arcade verification.
 - **Groovy Vibes**: nothing, just vibes.
 
 Traps and buffs wait until you're in an Arcade run, then fire one at a time.
@@ -42,6 +44,17 @@ If the game cannot load or spawn the first meteor, the client keeps the item and
 up to 3 attempts. After the third failed start it reports that the item was skipped and lets the queue continue.
 Pauses, downtime and airborne movement simply wait for a safe opportunity and do not spend those attempts.
 Once a batch has started it is spent; a later failed launch can skip that meteor without replaying the item.
+
+Prophet Car Trap uses **one item for both sets of three**, and has its own time limits instead of
+`effect_duration`. Both sets, including the wait between them, occupy the same effect slot: another car trap,
+meteor batch, speed trap or Blackout waits until it ends. Accepted car traps persist across client reconnects
+without replaying or consuming another item. An old mod without car support keeps the item queued and shows
+one update notice. Update both the game mod and APWorld before enabling `"Prophet Car Trap"`.
+
+The cars are intended to damage the player and enemies through native game behavior; damage and collision
+behavior are **not yet verified in live Arcade**. Native kills use the usual kill checks, and a death uses the
+normal DeathLink send chance once. Failed startup uses the same three-attempt, three-second retry policy as
+meteors. Once the first set is accepted, a failure in the second set cannot replay the whole item.
 
 ## DeathLink
 
@@ -73,8 +86,8 @@ The name in brackets is what the option is called in the YAML file.
 | Option | What it does | Default |
 |---|---|---|
 | Trap Percentage (`trap_percentage`) | Of your non-Gold-Record items, the percent that are traps. The rest are Mirror Ball Shields, Disco Fever and Groovy Vibes. | 35 |
-| Enabled Traps (`enabled_traps`) | Which traps can appear: Slow-Mo (game at 60%), Fast-Forward (140%), Molasses (only you at 60%), Blackout (screen 98% dark), or the experimental Meteor Trap (1–5 meteors, one at a time). Add Meteor Trap yourself after updating the mod and APWorld. | original four; meteor off |
-| Effect Duration (`effect_duration`) | Seconds the speed/screen traps and Disco Fever last. Meteor batches have their own limits in game time. | 15 |
+| Enabled Traps (`enabled_traps`) | Which traps can appear: Slow-Mo (game at 60%), Fast-Forward (140%), Molasses (only you at 60%), Blackout (screen 98% dark), experimental Meteor Trap (1–5 meteors, one at a time), or experimental Prophet Car Trap (two sets of three). Add either experimental trap yourself after updating the mod and APWorld. | original four; meteors and cars off |
+| Effect Duration (`effect_duration`) | Seconds the speed/screen traps and Disco Fever last. Meteor and car traps have their own time limits. | 15 |
 
 ### DeathLink
 

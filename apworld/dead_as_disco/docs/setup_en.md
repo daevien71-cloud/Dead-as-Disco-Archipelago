@@ -63,6 +63,10 @@ mod is running. In the client window:
 - `/testeffect meteor`: try a random batch of **1–5 meteors** while on the ground during Arcade combat.
   They arrive one at a time; dodge each warning, whose target stays where you stood when that meteor launched.
   Requires the updated game mod as well as the updated APWorld.
+- `/testeffect car`: send a **single-car probe** during Arcade combat before testing a full car trap.
+- `/testeffect cars`: try **two sets of three cars**, with the second set waiting for the first to disappear.
+  Both car commands require the updated mod and APWorld. They do not spend an AP item. Native player and
+  enemy damage still needs live Arcade verification; start with the single-car probe.
 - `/testdeathlink`: pretend a friend died. Goes to your slot only, then rolls your receive chance like a real one.
 - `/testkill`: die right away. This is a real death, so it can go out to everyone over DeathLink.
 
@@ -82,3 +86,14 @@ Meteor kills use the regular kill checks, and a meteor death uses the normal Dea
 Failure to load/spawn the first meteor retries after 3 seconds, up to 3 attempts; the client reports a skipped
 item if all three fail, then continues the queue. Menus, pauses, downtime and airborne movement do not use
 these attempts. Once the batch starts, later failed launches may be skipped without replaying the item.
+
+Prophet Car Trap is a v0.3.0 experimental candidate and is **off by default**. To include it in a new
+multiworld, add `"Prophet Car Trap"` to `enabled_traps`. It uses one item for both sets of three and its own
+time limits, independent of `effect_duration`. All other effects wait through both sets and the gap between
+them. A client restart does not replay an accepted car trap. Older mods keep the car item queued with one
+update notice. Startup failures retry after 3 seconds, up to 3 attempts; after acceptance, a later failure
+ends the same trap rather than spending another item or restarting both sets.
+
+Cars are intended to hurt you and enemies through the native attack, but that behavior remains unverified
+in live Arcade. Kills and deaths go through the regular game hooks, kill checks and normal DeathLink chance;
+the car trap adds no separate kill count or DeathLink roll.

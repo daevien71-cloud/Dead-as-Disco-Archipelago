@@ -26,9 +26,11 @@ Dead as Disco:
   trap_percentage: 35
   enabled_traps: ["Slow-Mo Trap", "Fast-Forward Trap", "Molasses Trap", "Blackout Trap"]
   # Optional experimental trap: add "Meteor Trap" above for 1–5 meteors per item, arriving one at a time.
-  # Update both the game mod and dead_as_disco.apworld first; meteors are off by default.
+  # Optional "Prophet Car Trap": two sets of three cars; the second waits until the first is gone.
+  # Cars are a v0.3.0 candidate; native player/enemy damage still needs live Arcade verification.
+  # Update both the game mod and dead_as_disco.apworld first; meteors and cars are off by default.
 
-  # Seconds that speed/screen traps and Disco Fever last. Meteor batches have their own game-time limits.
+  # Seconds that speed/screen traps and Disco Fever last. Meteor and car traps have their own time limits.
   effect_duration: 15
 
   # DeathLink, with a chance on each side.

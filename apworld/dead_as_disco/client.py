@@ -16,7 +16,7 @@ from NetUtils import ClientStatus
 
 from .bridge import GameBridge
 from .data import GAME_NAME
-from .tracker import Settings, Tracker, supports_meteor
+from .tracker import NATIVE_EFFECTS, Settings, Tracker, supports_effect
 
 POLL_SECONDS = 0.25
 # Marks a /testdeathlink packet. It's bounced to your slot only and carries no DeathLink tag, so it can
@@ -48,14 +48,23 @@ class DeadAsDiscoCommandProcessor(ClientCommandProcessor):
         return True
 
     def _cmd_testeffect(self, effect: str = "slowmo") -> bool:
-        """Test without using an item: slowmo, fastforward, molasses, blackout, fever, meteor (1–5, experimental)."""
-        if effect == "meteor" and not supports_meteor(self.ctx.bridge.status()):
-            self.output("Meteor test needs the updated game mod running. Update both the mod and APWorld first.")
+        """Test without using an item: slowmo, fastforward, molasses, blackout, fever, meteor, car (one), cars (two sets of three)."""
+        probe = effect == "car"
+        key = "cars" if probe else effect
+        if key in NATIVE_EFFECTS and not supports_effect(self.ctx.bridge.status(), key):
+            self.output(f"{effect.capitalize()} test needs the updated game mod running. Update both the mod and APWorld first.")
             return False
-        self.ctx.bridge.send({"type": "effect", "effect": effect, "duration": 10, "item": f"Test {effect}"})
+        command = {"type": "effect", "effect": key, "duration": 10, "item": f"Test {effect}"}
+        if probe:
+            command["probe"] = True
+        self.ctx.bridge.send(command)
         if effect == "meteor":
             self.output("Sent an experimental 1–5 meteor batch: stand on the ground during Arcade combat, then dodge "
                         "each warning. Meteors arrive one at a time and use their own limits in game time.")
+        elif key == "cars":
+            self.output("Sent an experimental single-car probe." if probe else
+                        "Sent an experimental car trap: two sets of three; the second waits until the first is gone.")
+            self.output("Native player and enemy damage still need live Arcade verification.")
         else:
             self.output(f"Sent test effect '{effect}' (only applies during a run).")
         return True

@@ -38,6 +38,7 @@ FAST_FORWARD_TRAP = "Fast-Forward Trap"
 MOLASSES_TRAP = "Molasses Trap"
 BLACKOUT_TRAP = "Blackout Trap"
 METEOR_TRAP = "Meteor Trap"
+PROPHET_CAR_TRAP = "Prophet Car Trap"
 
 ITEM_NAME_TO_ID = {
     GOLD_RECORD: ITEM_BASE + 1,
@@ -49,11 +50,12 @@ ITEM_NAME_TO_ID = {
     MOLASSES_TRAP: ITEM_BASE + 103,
     BLACKOUT_TRAP: ITEM_BASE + 104,
     METEOR_TRAP: ITEM_BASE + 105,
+    PROPHET_CAR_TRAP: ITEM_BASE + 106,
 }
 ITEM_ID_TO_NAME = {v: k for k, v in ITEM_NAME_TO_ID.items()}
 
 DEFAULT_TRAPS = (SLOW_MO_TRAP, FAST_FORWARD_TRAP, MOLASSES_TRAP, BLACKOUT_TRAP)
-TRAPS = (*DEFAULT_TRAPS, METEOR_TRAP)
+TRAPS = (*DEFAULT_TRAPS, METEOR_TRAP, PROPHET_CAR_TRAP)
 
 # Item name -> effect key understood by the UE4SS mod (Scripts/main.lua).
 ITEM_EFFECTS = {
@@ -63,6 +65,7 @@ ITEM_EFFECTS = {
     MOLASSES_TRAP: "molasses",
     BLACKOUT_TRAP: "blackout",
     METEOR_TRAP: "meteor",
+    PROPHET_CAR_TRAP: "cars",
 }
 
 ITEM_DESCRIPTIONS = {
@@ -76,4 +79,7 @@ ITEM_DESCRIPTIONS = {
     BLACKOUT_TRAP: "The screen goes almost completely dark (98%) for a while.",
     METEOR_TRAP: "Experimental: one trap rolls 1–5 Aurora meteors, arriving one at a time with warnings and native remnants. "
                  "Each targets where you stood when it launched. Off by default; update the game mod and APWorld together.",
+    PROPHET_CAR_TRAP: "Experimental: two sets of three Prophet cars; the second waits until the first is gone. "
+                      "Intended to damage you and enemies through native behavior; not yet verified in live Arcade. "
+                      "Off by default; update the game mod and APWorld together.",
 }

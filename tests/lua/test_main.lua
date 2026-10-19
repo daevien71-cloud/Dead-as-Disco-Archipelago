@@ -174,6 +174,27 @@ end
 function fake_meteor:stop() self.active = nil; self.stops = self.stops + 1 end
 function fake_meteor:tick() local done = self.done; self.done = nil; return done end
 package.loaded.meteor = {new = function() return fake_meteor end}
+local fake_cars = {active = nil, starts = 0, stops = 0}
+function fake_cars:ready()
+    if self.ready_throws then error("test cars readiness unavailable") end
+    return not self.ready_reason, self.ready_reason
+end
+function fake_cars:start(p, state, on_set, probe)
+    self.last_player, self.on_set, self.last_probe = p, on_set, probe
+    if self.partial_failure then self.active = {partial = true} end
+    if self.start_throws then error("native cars setup unavailable") end
+    if self.fail_reason then return false, self.fail_reason end
+    self.active = {}; self.starts = self.starts + 1
+    local count = probe and 1 or 2
+    if on_set then on_set(1, count) end
+    return true, count
+end
+function fake_cars:stop() self.active = nil; self.stops = self.stops + 1 end
+function fake_cars:tick()
+    if self.tick_throws then error("native cars tick unavailable") end
+    local done = self.done; self.done = nil; return done
+end
+package.loaded.cars = {new = function() return fake_cars end}
 dofile(root .. "/mod/DeadAsDiscoAP/Scripts/main.lua")
 check(#scheduled == 1, "main loop schedules its next tick")
 tick(1)
@@ -424,8 +445,11 @@ check(#events_of("effect_start") == starts_before_later_launch,
     "later meteors retain the original item lifecycle without another effect_start")
 command({type = "effect", effect = "meteor"})
 command({type = "effect", effect = "blackout"})
+command({type = "effect", effect = "cars"})
 tick()
 check(fake_meteor.starts == 1 and fake_meteor.active, "manual commands cannot overlap or replace a meteor")
+check(fake_cars.starts == 0 and events_of("effect_failed")[#events_of("effect_failed")].reason == "busy",
+    "cars cannot overlap or replace a meteor")
 fake_meteor.done = "native_finished"
 tick(4)
 check(read_status().effect == nil and events_of("effect_end")[#events_of("effect_end")].reason == "native_finished",
@@ -437,59 +461,187 @@ hooks[GS .. ":HandleLevelEnded"](param(state))
 tick(4)
 check(fake_meteor.stops == stops_before + 1 and not read_status().in_run, "run end cleans meteor once and stays ended")
 
--- A missing or broken optional meteor adapter must not prevent the original mod loading.
--- Reload only this narrow initialization scenario, discarding the previous scheduled loop.
+-- Cars share the native effect slot but load and fail independently of meteors.
+state.round = 0
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+hooks[GS .. ":AdvanceRound"](param(state))
+tick(4)
+check(read_status().version == "0.3.0" and read_status().effects[7] == "cars" and read_status().cars_ready,
+    "cars capability and readiness advertised in version 0.3.0")
+for _, reason in ipairs({"paused", "airborne"}) do
+    fake_cars.ready_reason = reason
+    command({type = "effect", effect = "cars"})
+    tick()
+    check(events_of("effect_failed")[#events_of("effect_failed")].reason == reason and fake_cars.starts == 0,
+        reason .. " defers cars before spawn")
+end
+fake_cars.ready_reason = nil
+state.bWaveClearedRequested = true
+command({type = "effect", effect = "cars"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "downtime" and fake_cars.starts == 0,
+    "wave downtime defers cars")
+state.bWaveClearedRequested = false
+fake_cars.ready_throws = true
+command({type = "effect", effect = "cars"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "spawn_failed",
+    "cars readiness exceptions become clean spawn_failed refusals")
+fake_cars.ready_throws = nil
+for _, reason in ipairs({"spawn_blocked", "asset_unavailable", "spawn_failed", "cleanup_failed"}) do
+    fake_cars.fail_reason, fake_cars.partial_failure = reason, true
+    local previous_starts, previous_stops = #events_of("effect_start"), fake_cars.stops
+    command({type = "effect", effect = "cars"})
+    tick()
+    check(events_of("effect_failed")[#events_of("effect_failed")].reason == reason,
+        "cars " .. reason .. " retains clean failure code")
+    check(fake_cars.active == nil and fake_cars.stops == previous_stops + 1 and #events_of("effect_start") == previous_starts,
+        "cars " .. reason .. " cleans a partial start without consuming the item")
+end
+fake_cars.fail_reason = nil
+fake_cars.start_throws = true
+command({type = "effect", effect = "cars"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "spawn_failed" and not fake_cars.active,
+    "unexpected cars setup throw cleans partial state and returns spawn_failed")
+fake_cars.start_throws, fake_cars.partial_failure = nil, nil
+command({type = "effect", effect = "blackout"})
+command({type = "effect", effect = "cars"})
+tick(4)
+check(fake_cars.starts == 0 and read_status().effect == "blackout", "cars cannot replace Blackout and hide lane warnings")
+hooks[GS .. ":HandleLevelRestarted"](param(state))
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 2
+hooks[GS .. ":AdvanceRound"](param(state))
+command({type = "effect", effect = "cars", probe = "true", duration = 1})
+tick(4)
+local cars_start = events_of("effect_start")[#events_of("effect_start")]
+check(fake_cars.starts == 1 and fake_cars.last_player == charlie and fake_cars.last_probe == false,
+    "cars use controlled pawn and only a boolean true enables probe mode")
+check(cars_start.effect == "cars" and cars_start.car_sets == 2 and cars_start.car_count == 6 and cars_start.duration == nil,
+    "normal cars event reports two sets and six cars without wall-clock expiry")
+check(read_status().effect == "cars" and not read_status().cars_ready and not read_status().meteor_ready,
+    "cars hold the native effect slot across sets")
+local cars_popup = widgets_created[#widgets_created].WidgetTree.RootWidget.child
+local _, first_set_warnings = cars_popup.shown:gsub("CARS: SET 1 OF 2!", "")
+check(first_set_warnings == 1, "first car set receives exactly one warning")
+local starts_before_next_set = #events_of("effect_start")
+fake_cars.on_set(2, 2)
+tick()
+check(cars_popup.shown:match("([^\n]*)$") == "CARS: SET 2 OF 2! Move out of the marked lanes!",
+    "second car set receives its numbered lane warning")
+check(#events_of("effect_start") == starts_before_next_set, "second car set does not acknowledge another item")
+local meteor_starts_before_cars = fake_meteor.starts
+for _, effect in ipairs({"meteor", "blackout", "slowmo", "cars"}) do command({type = "effect", effect = effect, probe = true}) end
+tick()
+check(fake_cars.starts == 1 and fake_meteor.starts == meteor_starts_before_cars and fake_cars.active and statics.dilation == 1,
+    "all competing native and ordinary effects remain blocked during cars")
+local car_stops_before = fake_cars.stops
+fake_cars.done = "native_finished"
+tick(4)
+check(not read_status().effect and fake_cars.stops == car_stops_before + 1
+    and events_of("effect_end")[#events_of("effect_end")].reason == "native_finished", "car native completion releases effect slot and cleans once")
+local car_ends_before = #events_of("effect_end")
+tick(4)
+check(#events_of("effect_end") == car_ends_before, "completed car lifecycle cannot acknowledge twice")
+
+command({type = "effect", effect = "cars", probe = true})
+tick(4)
+cars_start = events_of("effect_start")[#events_of("effect_start")]
+check(fake_cars.last_probe == true and cars_start.effect == "cars" and cars_start.car_sets == 1 and cars_start.car_count == 1,
+    "single-car probe uses cars effect identity with one set and one car")
+check(cars_popup.shown:match("([^\n]*)$") == "ONE CAR INCOMING! Move out of the marked lane!",
+    "single-car probe has singular warning wording")
+command({type = "effect", effect = "meteor"})
+tick()
+check(fake_meteor.starts == meteor_starts_before_cars and read_status().effect == "cars",
+    "single-car probe also blocks the Archipelago effect slot")
+car_stops_before = fake_cars.stops
+hooks[GS .. ":HandleLevelEnded"](param(state))
+tick(4)
+check(not read_status().in_run and not fake_cars.active and fake_cars.stops == car_stops_before + 1,
+    "scene/run end cleans active car probe once")
+command({type = "effect", effect = "cars"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "not_in_run", "cars cannot begin outside a run")
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+hooks[GS .. ":AdvanceRound"](param(state))
+command({type = "effect", effect = "cars"})
+tick()
+check(fake_cars.last_probe == false, "ordinary AP car command defaults to the full trap")
+fake_cars.tick_throws = true
+tick(4)
+check(not read_status().effect and not fake_cars.active
+    and events_of("effect_end")[#events_of("effect_end")].reason == "runtime_failed",
+    "unexpected cars runtime exception ends and cleans the effect instead of leaving it busy")
+fake_cars.tick_throws = nil
+
+-- A missing optional native adapter must leave the other adapter and original traps usable.
+-- Reload only initialization here, discarding the previous scheduled loop.
 local real_require, real_dofile = require, dofile
-for _, failure in ipairs({"missing_file", "constructor_failure", "nil_adapter"}) do
-    scheduled, hooks = {}, {}
-    state.round, state.bWaveClearedRequested = 0, false
-    local output_before = #output
-    if failure == "missing_file" then
-        package.loaded.meteor = nil
-        require = function(name)
-            if name == "meteor" then error("test meteor module unavailable") end
-            return real_require(name)
+for _, missing in ipairs({"meteor", "cars"}) do
+    local other = missing == "meteor" and "cars" or "meteor"
+    local other_adapter = other == "cars" and fake_cars or fake_meteor
+    for _, failure in ipairs({"missing_file", "constructor_failure", "nil_adapter"}) do
+        local label = missing .. " " .. failure
+        scheduled, hooks = {}, {}
+        state.round, state.bWaveClearedRequested = 0, false
+        package.loaded[other] = {new = function() return other_adapter end}
+        local output_before = #output
+        if failure == "missing_file" then
+            package.loaded[missing] = nil
+            require = function(name)
+                if name == missing then error("test " .. missing .. " module unavailable") end
+                return real_require(name)
+            end
+            dofile = function(path)
+                if path:match(missing .. "%.lua$") then error("test " .. missing .. " file unavailable") end
+                return real_dofile(path)
+            end
+        else
+            package.loaded[missing] = {new = function()
+                if failure == "constructor_failure" then error("test adapter constructor unavailable") end
+                return nil
+            end}
         end
-        dofile = function(path)
-            if path:match("meteor%.lua$") then error("test meteor file unavailable") end
-            return real_dofile(path)
+        local loaded, why = pcall(real_dofile, root .. "/mod/DeadAsDiscoAP/Scripts/main.lua")
+        require, dofile = real_require, real_dofile
+        check(loaded and #scheduled == 1, label .. " preserves main startup: " .. tostring(why))
+        if loaded then
+            tick()
+            hooks[GS .. ":ReinitDiscoState"](param(state))
+            state.round = 1
+            hooks[GS .. ":AdvanceRound"](param(state))
+            tick(4)
+            local status, advertised = read_status(), false
+            for _, key in ipairs(status.effects) do if key == missing then advertised = true end end
+            check(not advertised and #status.effects == 6 and not status[missing .. "_ready"] and status[other .. "_ready"],
+                label .. " removes only its own capability and readiness")
+            command({type = "effect", effect = missing})
+            tick()
+            check(events_of("effect_failed")[#events_of("effect_failed")].reason == "unsupported",
+                label .. " produces clean unsupported refusal")
+            command({type = "effect", effect = other})
+            tick()
+            check(other_adapter.active and events_of("effect_start")[#events_of("effect_start")].effect == other,
+                label .. " leaves the other native trap operational")
+            other_adapter.done = "native_finished"
+            tick()
+            command({type = "effect", effect = "slowmo"})
+            tick()
+            check(statics.dilation == 0.6 and events_of("effect_start")[#events_of("effect_start")].effect == "slowmo",
+                label .. " leaves ordinary traps operational")
+            hooks[GS .. ":HandleLevelEnded"](param(state))
+            tick()
+            check(statics.dilation == 1.0, label .. " preserves ordinary trap cleanup")
+            local logged = false
+            for index = output_before + 1, #output do
+                if output[index]:find(missing .. " unavailable:", 1, true) then logged = true end
+            end
+            check(logged, label .. " logs the unavailable adapter")
         end
-    else
-        package.loaded.meteor = {new = function()
-            if failure == "constructor_failure" then error("test meteor constructor unavailable") end
-            return nil
-        end}
-    end
-    local loaded, why = pcall(real_dofile, root .. "/mod/DeadAsDiscoAP/Scripts/main.lua")
-    require, dofile = real_require, real_dofile
-    check(loaded and #scheduled == 1, failure .. " preserves main mod startup: " .. tostring(why))
-    if loaded then
-        tick()
-        hooks[GS .. ":ReinitDiscoState"](param(state))
-        state.round = 1
-        hooks[GS .. ":AdvanceRound"](param(state))
-        tick(4)
-        local status = read_status()
-        local advertised = false
-        for _, key in ipairs(status.effects) do if key == "meteor" then advertised = true end end
-        check(not advertised and #status.effects == 5 and not status.meteor_ready,
-            failure .. " omits meteor capability and readiness while retaining original effects")
-        command({type = "effect", effect = "meteor"})
-        tick()
-        check(events_of("effect_failed")[#events_of("effect_failed")].reason == "unsupported",
-            failure .. " refuses meteor with a clean unsupported reason")
-        command({type = "effect", effect = "slowmo"})
-        tick()
-        check(statics.dilation == 0.6 and events_of("effect_start")[#events_of("effect_start")].effect == "slowmo",
-            failure .. " keeps ordinary traps operational")
-        hooks[GS .. ":HandleLevelEnded"](param(state))
-        tick()
-        check(statics.dilation == 1.0, failure .. " keeps ordinary trap cleanup operational")
-        local logged = false
-        for index = output_before + 1, #output do
-            if output[index]:find("meteor unavailable:", 1, true) then logged = true end
-        end
-        check(logged, failure .. " logs why meteor support is unavailable")
     end
 end
 

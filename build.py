@@ -16,6 +16,8 @@ RELEASE_FILES = [
     "README.md",
     "docs/meteor.md",
     "docs/meteor-research.md",
+    "docs/cars.md",
+    "docs/cars-research.md",
     "Install.bat",
     "Uninstall.bat",
     "Update.bat",
@@ -31,6 +33,7 @@ RELEASE_FILES = [
     "mod/DeadAsDiscoAP/Scripts/main.lua",
     "mod/DeadAsDiscoAP/Scripts/json.lua",
     "mod/DeadAsDiscoAP/Scripts/meteor.lua",
+    "mod/DeadAsDiscoAP/Scripts/cars.lua",
     "third_party/UE4SS_v3.0.1-1164-g5e627997.zip",
     "third_party/README.md",
 ]

@@ -8,6 +8,8 @@ who play other games.
 - **Items:** Gold Records, Disco Fever (enemies slowed), Mirror Ball Shield (blocks a DeathLink),
   and traps: Slow-Mo, Fast-Forward, Molasses (only you are slowed) and Blackout. An experimental
   **Meteor Trap** rolls 1–5 Aurora meteors per item in Arcade; enable it separately in `enabled_traps`.
+  The v0.3.0 candidate also adds **Prophet Car Trap**: two sets of three cars, with the second set waiting
+  until the first is gone. Cars remain experimental and need live Arcade verification.
 - **DeathLink:** your deaths have a 25% chance to be sent; their deaths have a 40% chance to kill you
   while you're in a run (both adjustable).
 
@@ -30,6 +32,15 @@ limits, pauses stop its clock, and leaving Arcade cancels the remaining meteors.
 whole batch; reconnecting does not replay or consume it again. A client connected to an
 older mod keeps meteor items queued and asks you to update. Test it with `/testeffect meteor` in the client;
 see [the meteor playtest guide](docs/meteor.md) for checks and current limitations.
+
+Prophet Car Trap is also **off by default**. Add `"Prophet Car Trap"` to `enabled_traps` only after updating
+both the mod and APWorld. Both sets occupy one effect slot and spend one item; meteors and other effects
+wait until the car trap ends. An older mod keeps the car item queued, and reconnecting does not replay an
+accepted trap. Its native collisions are intended to hurt the player and enemies; this remains **unverified
+in live Arcade**. Kills and deaths use the existing kill checks and normal DeathLink chance.
+For staged testing, `/testeffect car` sends one car and `/testeffect cars` requests both sets of three.
+These manual tests do not spend an AP item; they require a running mod with car support.
+Follow [the car playtest guide](docs/cars.md), starting with a single car in an open, flat arena.
 
 Only want to play alongside someone else's Dead as Disco? You just need `dead_as_disco.apworld` to generate.
 

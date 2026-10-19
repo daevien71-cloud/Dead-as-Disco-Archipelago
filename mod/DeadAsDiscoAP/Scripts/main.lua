@@ -6,7 +6,7 @@
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
 --   Ctrl+F9 disco fever  Ctrl+F10 kill yourself (a real death: it goes out over DeathLink)
 
-local VERSION = "0.2.0"
+local VERSION = "0.3.0"
 local TEST_HOTKEYS = false -- off for real sessions; the client's /testeffect and /testkill still work
 
 local GAME_STATE_CLASS = "BP_PagodaGameState_InfiniteDisco_C"
@@ -34,6 +34,7 @@ end
 
 local json
 local meteor
+local cars
 do
     local ok, result = pcall(require, "json")
     if not ok then
@@ -51,6 +52,16 @@ do
     end)
     if loaded then meteor = adapter
     else log("meteor unavailable: " .. tostring(adapter)) end
+    local cars_loaded, cars_adapter = pcall(function()
+        local found, module = pcall(require, "cars")
+        if not found then
+            local here = debug.getinfo(1, "S").source:match("^@?(.*[\\/])") or ""
+            module = dofile(here .. "cars.lua")
+        end
+        return assert(module.new(log), "cars adapter construction returned nil")
+    end)
+    if cars_loaded then cars = cars_adapter
+    else log("cars unavailable: " .. tostring(cars_adapter)) end
 end
 
 -- The installer writes the bridge folder into bridge_dir.txt next to the Scripts folder; the
@@ -278,6 +289,7 @@ local active_effect = nil -- {key, command_id, ends_at, revert}
 local popup -- defined with the pop-ups below
 local SUPPORTED_EFFECTS = {"slowmo", "fastforward", "molasses", "blackout", "fever"}
 if meteor then SUPPORTED_EFFECTS[#SUPPORTED_EFFECTS + 1] = "meteor" end
+if cars then SUPPORTED_EFFECTS[#SUPPORTED_EFFECTS + 1] = "cars" end
 
 local function meteor_ready()
     if not meteor then return false, "unsupported" end
@@ -294,6 +306,21 @@ local function meteor_ready()
     return ready, reason
 end
 
+local function cars_ready()
+    if not cars then return false, "unsupported" end
+    if not in_run() then return false, "not_in_run" end
+    if active_effect then return false, "busy" end
+    local ok, ready, reason = pcall(function()
+        if game_state().bWaveClearedRequested then return false, "downtime" end
+        return cars:ready(player())
+    end)
+    if not ok then
+        log("cars readiness failed: " .. tostring(ready))
+        return false, "spawn_failed"
+    end
+    return ready, reason
+end
+
 local EFFECT_POPUPS = {
     slowmo = "SLOW-MO! Everything slows down",
     fastforward = "FAST-FORWARD! Everything speeds up",
@@ -305,6 +332,11 @@ local EFFECT_POPUPS = {
 
 local function meteor_warning(index, count)
     return string.format("METEOR %d OF %d! Move from the marked spot!", index, count)
+end
+
+local function cars_warning(index, count, probe)
+    if probe then return "ONE CAR INCOMING! Move out of the marked lane!" end
+    return string.format("CARS: SET %d OF %d! Move out of the marked lanes!", index, count)
 end
 
 local function world_context()
@@ -335,6 +367,17 @@ local function camera_fade(from_alpha, to_alpha, hold)
 end
 
 local EFFECTS = {
+    cars = {
+        apply = function(probe)
+            if not cars then error({reason = "unsupported"}) end
+            local ok, count_or_reason = cars:start(player(), game_state(), function(index, count)
+                if index > 1 then popup(cars_warning(index, count, probe)) end
+            end, probe)
+            if not ok then error({reason = count_or_reason}) end
+            return count_or_reason
+        end,
+        revert = function() if cars then cars:stop("effect_ended") end end,
+    },
     meteor = {
         apply = function()
             if not meteor then error({reason = "unsupported"}) end
@@ -385,7 +428,7 @@ end_effect = function(reason)
     emit({type = "effect_end", effect = effect.key, command_id = effect.command_id, reason = reason})
 end
 
-local function start_effect(key, duration, command_id)
+local function start_effect(key, duration, command_id, probe)
     local definition = EFFECTS[key]
     if not definition then
         emit({type = "effect_failed", effect = key, command_id = command_id, reason = "unknown effect"})
@@ -395,26 +438,34 @@ local function start_effect(key, duration, command_id)
         emit({type = "effect_failed", effect = key, command_id = command_id, reason = "not_in_run"})
         return
     end
-    -- A meteor owns the warning, flight and kickable remnant as one effect. Manual test
-    -- commands must obey the same exclusivity as the AP queue, including Blackout.
-    if key == "meteor" or (active_effect and active_effect.key == "meteor") then
-        local ready, reason = meteor_ready()
+    -- Native traps keep the effect slot for their whole lifecycle. Manual commands
+    -- obey the same exclusivity as the AP queue, including Blackout.
+    local native = key == "meteor" or key == "cars"
+    local car_probe = key == "cars" and probe == true
+    if active_effect and (active_effect.key == "meteor" or active_effect.key == "cars") then
+        emit({type = "effect_failed", effect = key, command_id = command_id, reason = "busy"})
+        return
+    end
+    if native then
+        local ready, reason
+        if key == "cars" then ready, reason = cars_ready()
+        else ready, reason = meteor_ready() end
         if not ready then
             emit({type = "effect_failed", effect = key, command_id = command_id, reason = reason})
             return
         end
     end
     end_effect("replaced")
-    local ok, result = pcall(definition.apply)
+    local ok, result = pcall(definition.apply, car_probe)
     if not ok then
         local reason = tostring(result)
         local detail = reason
-        if key == "meteor" then
+        if native then
             reason = "spawn_failed"
             if type(result) == "table" then
                 local code = result.reason
                 detail = tostring(result.detail or code or result)
-                local known = {spawn_blocked = true, asset_unavailable = true, spawn_failed = true,
+                local known = {spawn_blocked = true, asset_unavailable = true, spawn_failed = true, cleanup_failed = true,
                     unsupported = true, busy = true, paused = true, airborne = true, downtime = true, not_in_run = true}
                 if known[code] then reason = code end
             end
@@ -426,11 +477,14 @@ local function start_effect(key, duration, command_id)
     end
     duration = math.max(1, math.min(tonumber(duration) or 15, 120))
     active_effect = {key = key, command_id = command_id, revert = definition.revert}
-    if key ~= "meteor" then active_effect.ends_at = os.time() + duration end
+    if not native then active_effect.ends_at = os.time() + duration end
     emit({type = "effect_start", effect = key, command_id = command_id, value = tostring(result),
-        duration = key ~= "meteor" and duration or nil, meteor_count = key == "meteor" and result or nil})
-    popup(key == "meteor" and meteor_warning(1, result) or (EFFECT_POPUPS[key] .. " (" .. duration .. "s)"))
-    log("effect " .. key .. (key == "meteor" and " on (native lifecycle)" or (" on for " .. duration .. "s"))
+        duration = not native and duration or nil, meteor_count = key == "meteor" and result or nil,
+        car_sets = key == "cars" and result or nil, car_count = key == "cars" and (car_probe and 1 or 6) or nil})
+    if key == "cars" then popup(cars_warning(1, result, car_probe))
+    elseif key == "meteor" then popup(meteor_warning(1, result))
+    else popup(EFFECT_POPUPS[key] .. " (" .. duration .. "s)") end
+    log("effect " .. key .. (native and " on (native lifecycle)" or (" on for " .. duration .. "s"))
         .. " (value " .. tostring(result) .. ")")
 end
 
@@ -700,7 +754,7 @@ local function handle_command(command)
         last_command_id[client] = id
     end
     if command.type == "effect" then
-        start_effect(command.effect, command.duration, command.id)
+        start_effect(command.effect, command.duration, command.id, command.effect == "cars" and command.probe == true)
     elseif command.type == "kill" then
         request_kill(command.source)
     elseif command.type == "message" then
@@ -716,7 +770,7 @@ local function write_status()
         version = VERSION, session = session, t = os.time(), in_run = in_run(),
         round = run.round, cleared = run.cleared, dead = run.dead,
         effect = active_effect and active_effect.key or nil,
-        effects = SUPPORTED_EFFECTS, meteor_ready = meteor_ready(),
+        effects = SUPPORTED_EFFECTS, meteor_ready = meteor_ready(), cars_ready = cars_ready(),
         kill_pending = pending_kill ~= nil,
     }))
     file:close()
@@ -751,8 +805,13 @@ local function tick()
         pending_kills = 0
     end
 
-    if active_effect and active_effect.key == "meteor" then
-        local reason = meteor:tick(player(), game_state(), in_run())
+    if active_effect and (active_effect.key == "meteor" or active_effect.key == "cars") then
+        local adapter = active_effect.key == "cars" and cars or meteor
+        local ok, reason = pcall(adapter.tick, adapter, player(), game_state(), in_run())
+        if not ok then
+            log(active_effect.key .. " runtime failed: " .. tostring(reason))
+            reason = "runtime_failed"
+        end
         if reason then end_effect(reason) end
     elseif active_effect and os.time() >= active_effect.ends_at then end_effect("expired") end
 

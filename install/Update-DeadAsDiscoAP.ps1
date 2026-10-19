@@ -15,7 +15,7 @@ $Source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'update_source.json'
 
 function Get-Fingerprint {
     $files = @('dead_as_disco.apworld', 'mod\DeadAsDiscoAP\Scripts\main.lua',
-               'mod\DeadAsDiscoAP\Scripts\meteor.lua') | ForEach-Object { Join-Path $Root $_ }
+               'mod\DeadAsDiscoAP\Scripts\meteor.lua', 'mod\DeadAsDiscoAP\Scripts\cars.lua') | ForEach-Object { Join-Path $Root $_ }
     ($files | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { (Get-FileHash -LiteralPath $_).Hash }) -join ','
 }
 

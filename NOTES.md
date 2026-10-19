@@ -3,6 +3,68 @@
 Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
 [AGENTS.md](AGENTS.md).
 
+## Prophet Car Trap candidate (2026-10-19)
+
+- The owner requested Prophet's rushing highway cars: two sets of three, with set two only after set
+  one disappears, hitting players and enemies. They are going to bed; prepare as far as offline work
+  permits and leave live tests for the morning. No unattended live car hazards were triggered.
+- Branched `codex/prophet-car-trap` from `c8a1e54`, the completed live-tested meteor branch. The original
+  checkout and its separate Claude prototype remain untouched. Installed game scripts and APWorld
+  were compared byte-for-byte with the v0.2.0 release and remain unchanged. The v0.3.0 package is a
+  candidate, not a claim of live car success.
+- Read-only inspection decoded 58 functions in seven packages with bytecode roundtrip and unchanged
+  source checks. Native `BP_Prophet_Highway_Car` inherits movement/hits from `BP_MovingHazard_Base` /
+  `BP_ObjectsMoving`; `BP_CarWarningIndicator` owns route materials, warnings, horn and beat pulses.
+  The boss ability activates preplaced tagged cars. A standalone car needs no boss or lane manager.
+  Exact contracts and source provenance are in `docs/cars-research.md`; proprietary extracts remain
+  outside the repository in sibling `car-research`.
+- Claude and Codex agreed on a separate small native adapter, no generic hazard framework, native
+  damage only, deferred spawning with collision disabled, and strict ownership/cleanup. One manual
+  probe uses `effect=cars, probe=true`; AP commands never include that flag. Added off-by-default
+  Prophet Car Trap 814200106; one item occupies the existing native slot for both sets.
+- Car configuration: positive local X, 4,000-unit travel at 1,600 units/second, loops and end-reset
+  disabled, song activation tags cleared, lane manager unset. Native BeginPlay's 0.2-second readiness
+  must complete while frozen. Each set gets a full two-second warning with at least half a second
+  near-hit color. The adapter only moves actor roots; native Train-relative origin and motion remain.
+- Runtime measurements derive lane width, vehicle floor offset and native warning fit. Collider
+  ancestry/relative transforms and movement axes are validated; final warning mesh corners are read
+  back in route coordinates. No terrain/wall trace exists, so cramped or uneven arenas remain a live
+  limitation. Do not claim a route blocked by a wall is detected or rerouted.
+- Native car overlap handles the player and BP_Enemy_Base separately, honors ignore tags/resistance,
+  and uses native ProcessSimpleHit. Default damage must be positive and is logged, never replaced.
+  Actual warning appearance, native collision/damage and floor placement are not yet verified.
+- Cleanup disables collision, hides and destroys only owned actors. At most three cars and three
+  warnings exist, with a one-second inter-set gap, 12-second set cap, 14-second lifespan fallback and
+  40-second batch cap. Survivors quarantine further car spawns. Pauses use game time; run/player/state/
+  world changes cancel the batch; downtime cannot start a fresh set.
+- Claude review caught a real stale-deadline bug that shortened set two's warning; fixed by resetting
+  both warning fields per set and adding explicit timing regressions. Delayed ticks now extend the
+  red phase. Lifecycle false-value readbacks are strict. The suggested collider-only floor fallback
+  was rejected with evidence: Train is a StaticMeshComponent in all three export headers, and collision
+  volume bounds do not establish wheel height. Both warning-add branches synchronously update state.
+- The pinned UE4SS validity check can retain destroyed UObject memory until GC. Native
+  IsActorBeingDestroyed is now checked for owned actors; UE's synchronous DestroyActor unregisters
+  components/ticks before returning. This avoids blocking set two on garbage collection while still
+  refusing it if destruction genuinely fails.
+- Claude's focused follow-up approved the offline candidate for the live single-car probe with no
+  remaining blockers. Its nonblocking note about repeated warning updates during downtime was also
+  addressed: the adapter resets the warning once, then waits without repeated native/audio calls.
+- Existing meteor save keys are retained for compatibility and now journal either native trap.
+  Different-ID probe start/end/failure events cannot mutate a pending AP car item; actual AP dispatch
+  and saved journals omit probe. Both updater fingerprints and the release list include cars.lua.
+- Validation passed: 84 Python unit tests; 136 main Lua checks; 232 car checks across 73 scenarios;
+  267 meteor checks across 51 scenarios; 11 real-server/fake-game E2E checks (meteor then cars then
+  ordinary trap, pause/watchdog and reconnect); 10 Windows/Linux updater tests; six Linux installer
+  tests; Lua syntax and git diff checks. The 24-entry release archive matched source bytes and
+  contained the matching v0.3.0 APWorld, car module and guides, with no temporary probe or game assets.
+  Windows updater tests need inherited PSModulePath removed before launching Python directly;
+  a PowerShell Tee-Object pipeline can reintroduce the incompatible PS7 path. No production workaround
+  was added for this test-host environment issue.
+- Morning test order: install matching candidate mod/APWorld with game/client closed; `/testeffect car`
+  in open, flat Arcade combat; confirm warning, route, player hit, enemy hit and cleanup; only then
+  `/testeffect cars`, followed by controlled AP delivery and transition/reconnect checks. Instructions
+  and log locations are in `docs/cars.md`. The v0.2.0 package remains available for rollback.
+
 ## Aurora Meteor Trap (2026-10-19)
 
 - Baseline audit: authenticated GitHub and local history agreed on `620aee6` / v0.1.0 in

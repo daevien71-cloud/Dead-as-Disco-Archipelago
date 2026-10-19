@@ -62,21 +62,21 @@ class UpdateTest(unittest.TestCase):
 
     def check_updated(self, output: str, worlds: Path) -> None:
         self.assertIn("Updated!", output)
-        for script in ("main.lua", "meteor.lua"):
+        for script in ("main.lua", "meteor.lua", "cars.lua"):
             installed = (self.win64 / "ue4ss" / "Mods" / "DeadAsDiscoAP" / "Scripts" / script).read_bytes()
             self.assertEqual(installed, (ROOT / "mod" / "DeadAsDiscoAP" / "Scripts" / script).read_bytes())
         self.assertEqual((worlds / "dead_as_disco.apworld").read_bytes(), (ROOT / "dead_as_disco.apworld").read_bytes())
         self.assertTrue((self.old / "README.md").exists(), "the folder itself was refreshed")
 
-    def meteor_only_old_copy(self, missing: bool = False) -> None:
-        """Leave main.lua and the APWorld identical; only the meteor module needs updating."""
+    def module_only_old_copy(self, module: str, missing: bool = False) -> None:
+        """Leave main.lua, the APWorld and the other module identical; only this module needs updating."""
         scripts = Path("mod") / "DeadAsDiscoAP" / "Scripts"
         shutil.copy2(ROOT / scripts / "main.lua", self.old / scripts / "main.lua")
-        meteor = self.old / scripts / "meteor.lua"
+        path = self.old / scripts / module
         if missing:
-            meteor.unlink()  # releases before 0.2.0 did not ship this module
+            path.unlink()  # older releases did not ship this module
         else:
-            meteor.write_bytes(meteor.read_bytes() + b"\n-- older meteor tuning\n")
+            path.write_bytes(path.read_bytes() + b"\n-- older native effect tuning\n")
 
     def check_linux_update(self) -> None:
         home = self.base / "home"
@@ -113,11 +113,19 @@ class UpdateTest(unittest.TestCase):
         self.check_linux_update()
 
     def test_linux_meteor_only_change(self) -> None:
-        self.meteor_only_old_copy()
+        self.module_only_old_copy("meteor.lua")
         self.check_linux_update()
 
     def test_linux_adds_missing_meteor(self) -> None:
-        self.meteor_only_old_copy(missing=True)
+        self.module_only_old_copy("meteor.lua", missing=True)
+        self.check_linux_update()
+
+    def test_linux_cars_only_change(self) -> None:
+        self.module_only_old_copy("cars.lua")
+        self.check_linux_update()
+
+    def test_linux_adds_missing_cars(self) -> None:
+        self.module_only_old_copy("cars.lua", missing=True)
         self.check_linux_update()
 
     @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
@@ -126,12 +134,22 @@ class UpdateTest(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
     def test_windows_meteor_only_change(self) -> None:
-        self.meteor_only_old_copy()
+        self.module_only_old_copy("meteor.lua")
         self.check_windows_update()
 
     @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
     def test_windows_adds_missing_meteor(self) -> None:
-        self.meteor_only_old_copy(missing=True)
+        self.module_only_old_copy("meteor.lua", missing=True)
+        self.check_windows_update()
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
+    def test_windows_cars_only_change(self) -> None:
+        self.module_only_old_copy("cars.lua")
+        self.check_windows_update()
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
+    def test_windows_adds_missing_cars(self) -> None:
+        self.module_only_old_copy("cars.lua", missing=True)
         self.check_windows_update()
 
 
