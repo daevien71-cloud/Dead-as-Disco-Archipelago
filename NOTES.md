@@ -56,6 +56,15 @@ Dated decisions, findings and research facts. For the current state, conventions
   inherited PowerShell 7 `PSModulePath` when launching Windows PowerShell 5 from this development host.
 - Build v0.2.0 includes `meteor.lua` and both meteor guides. Temporary probes, game assets, dumps,
   local logs, bridge backups and test servers stay outside the release. Cars remain deferred.
+- Final installed batch playtest passed on code commit `2d98ead`: one real AP item rolled **four** meteors.
+  Launch gaps were 16.175, 16.169 and 16.182 wall-clock seconds; falls were 1.976–1.995 seconds. All four
+  native remnants were captured and their timers extended to 11s, with no skip/failure/unobserved warnings.
+  The owner reported that it worked and the final impact damaged them while they stood in it. The final
+  remnant remained active while the game was paused for a reply, then finished after unpausing. Logs
+  recorded one command, one start, one end (`expired`), `effects_done = 1`, `pending_meteor = null`, and
+  no retry or additional effect. Both local server and client exited gracefully; the game returned to
+  `meteor_ready = true` with no active effect. Evidence: `playtest/live-meteor-20261019-120841-UTC-802f8d/`.
+  This verifies the random batch production path, not every count, transition or Linux/Proton behavior.
 
 ## Decisions (2026-10-11)
 

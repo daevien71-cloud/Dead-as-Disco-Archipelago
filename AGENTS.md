@@ -87,9 +87,10 @@ v0.2.0 adds an opt-in **Meteor Trap** (814200105), off in the default trap set. 
 sequential meteors. It reuses Aurora's
 native falling meteor, warning, damage and kickable remnant. `Scripts/meteor.lua` owns only spawning,
 timing and cleanup. Live probes confirmed ~1.98s flight, player damage 10 HP, enemy damage 60 HP, and
-kicking into ordinary NPCs. Real AP delivery through the installed single-meteor version passed,
-including saved consumption. Batch and transition validation are recorded in `docs/meteor.md` and
-`NOTES.md`; do not infer they passed from the native probe alone.
+kicking into ordinary NPCs. Real AP delivery passed in the installed batch build: one item rolled four
+meteors, all four launched and produced tracked remnants, then one end acknowledgement cleared the
+pending item. The owner confirmed the final impact damaged them. The final remnant survived a pause
+and cleanup completed after unpausing. Remaining transition checks are in `docs/meteor.md` and `NOTES.md`.
 
 Resolve the controlled player with `GameplayStatics:GetPlayerPawn(state, 0)`: `FindAllOf` can return a
 valid old Charlie after restart. Never add substitute damage to compensate for targeting that old actor.
@@ -115,7 +116,8 @@ meteor items queued. See `docs/meteor-research.md` for exact hook contracts and 
 
 ## Next
 
-- Complete the remaining batch, pause/menu/death/song/arena and Linux/Proton live checks in `docs/meteor.md`.
+- Complete the remaining queued-batch, pause-during-flight, menu/death/song/arena, reconnect and
+  Linux/Proton live checks in `docs/meteor.md`.
 - Cars remain a later feature; do not expand this into a generic hazard framework.
 - Watch long runs: does the wave count survive song changes?
 - More traps: enemy surge, hiding the beat indicator, forced outfit.
