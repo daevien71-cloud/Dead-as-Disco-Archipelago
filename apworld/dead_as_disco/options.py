@@ -9,7 +9,7 @@ from Options import (
     StartLocationHints,
 )
 
-from .data import KILL_THRESHOLDS, TRAPS
+from .data import DEFAULT_TRAPS, KILL_THRESHOLDS, TRAPS
 
 
 # ----- Goal -------------------------------------------------------------------------------------------------------
@@ -106,16 +106,25 @@ class EnabledTraps(OptionSet):
     **Slow-Mo Trap:** the whole game runs at 60% speed. **Fast-Forward Trap:** the whole game runs at 140%.
     **Molasses Trap:** only you are slowed to 60%. **Blackout Trap:** the screen goes 98% dark.
     The music keeps its normal speed, so the speed traps throw you off the beat.
+
+    **Meteor Trap (experimental, off by default):** each item rolls 1–5 Aurora meteors. They arrive one at a
+    time, each targeting where you stood when it launched, with a warning before impact. The next waits for
+    the previous meteor and remnant to disappear. Update both the game mod and APWorld before adding it.
+    The whole batch uses one item and its own time limits, separate from Effect Duration; pauses stop its clock.
+    Native base damage is 10 to you and 60 to enemies; the game's normal damage modifiers still apply.
+    Enemy kills count toward your usual kill checks. Dying to a meteor uses your normal DeathLink send chance,
+    with no extra DeathLink roll or message.
     """
     display_name = "Enabled Traps"
     valid_keys = frozenset(TRAPS)
-    default = frozenset(TRAPS)
+    default = frozenset(DEFAULT_TRAPS)
 
 
 class EffectDuration(Range):
-    """How many seconds each trap and each Disco Fever lasts.
+    """How many seconds the speed/screen traps and each Disco Fever last.
 
     Traps and buffs wait until you're in an Arcade run, then fire one at a time.
+    The experimental Meteor Trap rolls 1–5 meteors and has its own batch time limit; this option does not change it.
     """
     display_name = "Effect Duration"
     range_start = 5

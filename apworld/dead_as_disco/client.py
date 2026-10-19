@@ -16,7 +16,7 @@ from NetUtils import ClientStatus
 
 from .bridge import GameBridge
 from .data import GAME_NAME
-from .tracker import Settings, Tracker
+from .tracker import Settings, Tracker, supports_meteor
 
 POLL_SECONDS = 0.25
 # Marks a /testdeathlink packet. It's bounced to your slot only and carries no DeathLink tag, so it can
@@ -48,9 +48,16 @@ class DeadAsDiscoCommandProcessor(ClientCommandProcessor):
         return True
 
     def _cmd_testeffect(self, effect: str = "slowmo") -> bool:
-        """Send an effect to the game without using an item: slowmo, fastforward, molasses, blackout, fever."""
+        """Test without using an item: slowmo, fastforward, molasses, blackout, fever, meteor (1–5, experimental)."""
+        if effect == "meteor" and not supports_meteor(self.ctx.bridge.status()):
+            self.output("Meteor test needs the updated game mod running. Update both the mod and APWorld first.")
+            return False
         self.ctx.bridge.send({"type": "effect", "effect": effect, "duration": 10, "item": f"Test {effect}"})
-        self.output(f"Sent test effect '{effect}' (only applies during a run).")
+        if effect == "meteor":
+            self.output("Sent an experimental 1–5 meteor batch: stand on the ground during Arcade combat, then dodge "
+                        "each warning. Meteors arrive one at a time and use their own limits in game time.")
+        else:
+            self.output(f"Sent test effect '{effect}' (only applies during a run).")
         return True
 
     def _cmd_testdeathlink(self, name: str = "Test Buddy") -> bool:
@@ -205,7 +212,7 @@ async def game_tick(ctx: DeadAsDiscoContext) -> None:
         ctx.last_status_cleared = cleared
         if cleared > 0:
             await ctx.apply(tracker.on_wave(cleared))
-    effect = tracker.next_effect_to_send(in_run)
+    effect = tracker.next_effect_to_send(in_run, status)
     if effect:
         item_name, key = effect
         command_id = ctx.bridge.send({"type": "effect", "effect": key, "item": item_name,

@@ -3,6 +3,60 @@
 Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
 [AGENTS.md](AGENTS.md).
 
+## Aurora Meteor Trap (2026-10-19)
+
+- Baseline audit: authenticated GitHub and local history agreed on `620aee6` / v0.1.0 in
+  `daevien71-cloud/Dead-as-Disco-Archipelago`. GitHub reports it public; no newer accessible private
+  Disco repository was found. Claude independently checked. Original checkout preserved; changes built
+  in an isolated `codex/aurora-meteor-trap` worktree.
+- Final audit also found separate uncommitted Claude preparation in the original checkout on
+  `meteor-strike-prep` (`METEOR_STRIKE.md`, a backend-driven scheduler and fixed-count option). It remains
+  untouched. This branch contains the native implementation proved in Arcade and the owner's later
+  random-count choice; do not blindly merge the two alternatives or their differing names for item 105.
+- Added optional Meteor Trap, ID 814200105, without changing existing IDs, Gold Records or goals.
+  Defaults keep the previous four traps. Client/mod capability and readiness prevent dispatch to old
+  mods, menus, downtime, airborne players, or another active effect. A received meteor is consumed at
+  its start acknowledgement; pending metadata is persisted across reconnects before that acknowledgement.
+- Native-first research and tests: deferred spawn of `BP_BigDoll_Meteor` works without its boss.
+  Initial beat warping compressed the flight to ~0.53s; disabling it only for the falling actor yields
+  ~1.98s and the owner confirmed a readable warning. Native impact dealt 60 HP to ordinary enemies;
+  native player damage of 10 HP was logged before any experimental fallback ran. The owner confirmed
+  striking/kicking the remnant into NPCs. No custom damage, filters or launch behavior remain.
+- A valid leftover Charlie misled initial player-damage tests. Main now resolves the controlled pawn
+  through `GameplayStatics:GetPlayerPawn(state, 0)`. An experimental player fallback caused an extra
+  hit on that old actor and was removed. A separate native filter reconstruction crashed; it was also
+  removed. The ordinary target-data/filter diagnostic was invalid because opaque native struct contents
+  are lost in reflected-only Lua returns. These experiments are not shipped.
+- Keep the exact remnant captured by a transient native spawn POST hook. Extend only that remnant's
+  expiry ability through a scoped native timer PRE hook: both its deadline field and timeline input
+  agree on at least 11s, implying about 8.25s before native dissolve makes it untargetable. Each
+  meteor has a 16s game-time cap. Hooks are removed outside their callbacks; transitions destroy only
+  the two tracked actors. Current-player/world/state identity checks prevent carrying a hazard forward.
+- Real local AP server → current client → installed game passed: exactly one command/start/end and one
+  persisted item consumption, with no pending meteor afterward. The user saw the popup and may have
+  dodged. This confirms production delivery, not additional damage evidence. The test server/client
+  exited cleanly. Local evidence: `playtest/live-meteor-20261019-115052-UTC-d538ea/result.json`.
+- The owner then requested random 1–5 meteors per item. Claude recommended sequential native lifecycles
+  over overlapping hooks; Codex agreed, keeping the tested 11s remnant window because the owner needed
+  time to kick. A batch chooses its count once, waits for the prior remnant and at least 3 game seconds,
+  targets the current grounded position, and occupies one AP effect slot. Its cap is `20 * count + 10`
+  game seconds. Later spawns wait through downtime/pause/airborne states; failed attempts are skipped.
+  Ending the run cancels the current and remaining meteors. The item is consumed once at the first start.
+- Claude's review identified three safeguards, now addressed: preserve the timer hook until the owned
+  ability actually schedules (including delayed activation); keep old effects working when the optional
+  module cannot load; return clean spawn failures and retry unstarted items at most three times, with
+  persisted retry count/delay. Final batch review found no blockers. A missing remnant observation stops
+  the batch rather than risking additional untracked hazards; unexpected native timer errors also abort
+  safely. No remaining disagreement on the native-first design.
+- Offline checks: 64 Python units, 80 main Lua checks, 51 native-adapter scenarios / 267 checks,
+  10 real-server/fake-game protocol checks, 6 updater tests and 6 Linux installer tests. The batch E2E
+  holds five meteors beyond the old watchdog and restarts the client, proving one item consumption and
+  no extra dispatch. Missing/stale heartbeat recovery is covered separately. Lua checks simulate API
+  contracts and cannot establish rendering or game damage. Windows updater tests require clearing an
+  inherited PowerShell 7 `PSModulePath` when launching Windows PowerShell 5 from this development host.
+- Build v0.2.0 includes `meteor.lua` and both meteor guides. Temporary probes, game assets, dumps,
+  local logs, bridge backups and test servers stay outside the release. Cars remain deferred.
+
 ## Decisions (2026-10-11)
 
 - Friends play **other games** and don't own Dead as Disco. Only the owner runs the mod.

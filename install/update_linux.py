@@ -18,7 +18,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-FINGERPRINT_FILES = ["dead_as_disco.apworld", "mod/DeadAsDiscoAP/Scripts/main.lua"]
+FINGERPRINT_FILES = ["dead_as_disco.apworld", "mod/DeadAsDiscoAP/Scripts/main.lua",
+                     "mod/DeadAsDiscoAP/Scripts/meteor.lua"]
 
 
 def fingerprint() -> list[str]:

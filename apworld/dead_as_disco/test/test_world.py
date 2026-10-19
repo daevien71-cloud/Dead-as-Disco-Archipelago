@@ -1,8 +1,26 @@
-from ..data import GOLD_RECORD, MILESTONE_WAVES, TRAPS, wave_location_name
+from BaseClasses import ItemClassification
+
+from ..data import (
+    BLACKOUT_TRAP, DEFAULT_TRAPS, DISCO_FEVER, FAST_FORWARD_TRAP, GOLD_RECORD, GROOVY_VIBES,
+    ITEM_BASE, ITEM_NAME_TO_ID, METEOR_TRAP, MILESTONE_WAVES, MIRROR_BALL_SHIELD, MOLASSES_TRAP,
+    SLOW_MO_TRAP, TRAPS, wave_location_name,
+)
+from ..options import EnabledTraps
 from . import DeadAsDiscoTestBase
 
 
 class TestDefaults(DeadAsDiscoTestBase):
+    def test_meteor_is_opt_in(self) -> None:
+        self.assertIn(METEOR_TRAP, EnabledTraps.valid_keys)
+        self.assertEqual(self.world.options.enabled_traps.value, frozenset(DEFAULT_TRAPS))
+        self.assertNotIn(METEOR_TRAP, [item.name for item in self.multiworld.itempool])
+
+    def test_item_ids_remain_compatible(self) -> None:
+        offsets = {GOLD_RECORD: 1, DISCO_FEVER: 2, MIRROR_BALL_SHIELD: 3, GROOVY_VIBES: 4,
+                   SLOW_MO_TRAP: 101, FAST_FORWARD_TRAP: 102, MOLASSES_TRAP: 103, BLACKOUT_TRAP: 104,
+                   METEOR_TRAP: 105}
+        self.assertEqual(ITEM_NAME_TO_ID, {name: ITEM_BASE + offset for name, offset in offsets.items()})
+
     def test_location_count(self) -> None:
         locations = self.multiworld.get_locations(self.player)
         self.assertEqual(len(locations), len(MILESTONE_WAVES) + 8)
@@ -54,3 +72,15 @@ class TestAllTraps(DeadAsDiscoTestBase):
     def test_all_non_records_are_traps(self) -> None:
         pool = [item.name for item in self.multiworld.itempool if item.player == self.player]
         self.assertEqual(sum(name in TRAPS for name in pool), len(pool) - 1)
+
+
+class TestMeteorOnly(DeadAsDiscoTestBase):
+    options = {"enabled_traps": [METEOR_TRAP], "trap_percentage": 100,
+               "gold_record_count": 1, "gold_records_required": 1}
+
+    def test_meteor_pool_and_classification(self) -> None:
+        pool = [item for item in self.multiworld.itempool if item.player == self.player]
+        self.assertEqual(sum(item.name == METEOR_TRAP for item in pool), len(pool) - 1)
+        self.assertTrue(all(item.classification == ItemClassification.trap
+                            for item in pool if item.name == METEOR_TRAP))
+        self.assertEqual(self.world.fill_slot_data()["gold_records_required"], 1)

@@ -79,14 +79,34 @@ Archipelago's `logs/DeadAsDiscoClient_*.txt`.
   `Content/Paks/~mods`; installers never touch `Content/Paks`.
 - Linux needs the Steam launch option `WINEDLLOVERRIDES="dwmapi=n,b" %command%` for UE4SS.
 
-## Status (2026-10-12)
+## Status (2026-10-19)
 
 v0.1.0 works on Windows and Linux and has been played with friends.
+
+v0.2.0 adds an opt-in **Meteor Trap** (814200105), off in the default trap set. Each item rolls 1–5
+sequential meteors. It reuses Aurora's
+native falling meteor, warning, damage and kickable remnant. `Scripts/meteor.lua` owns only spawning,
+timing and cleanup. Live probes confirmed ~1.98s flight, player damage 10 HP, enemy damage 60 HP, and
+kicking into ordinary NPCs. Real AP delivery through the installed single-meteor version passed,
+including saved consumption. Batch and transition validation are recorded in `docs/meteor.md` and
+`NOTES.md`; do not infer they passed from the native probe alone.
+
+Resolve the controlled player with `GameplayStatics:GetPlayerPawn(state, 0)`: `FindAllOf` can return a
+valid old Charlie after restart. Never add substitute damage to compensate for targeting that old actor.
+Opaque native struct returns become reflected-only Lua tables in this UE4SS version; do not round-trip
+target-data/filter handles through ordinary Lua returns. A discarded filter experiment crashed the game.
+
+Meteor timers use game time (16s cap per launch); native remnant timer is extended to 11s. One meteor
+and its remnant at a time, at least 3s between launches, with a whole-batch cap of `20 * count + 10`.
+The batch occupies one effect slot. AP consumption is persisted once at its first start; pending command
+metadata survives reconnects. Unstarted failures retry twice with 3s gaps before a logged skip; later
+failed spawns skip just that meteor. Missing adapters leave the original effects working. Old mods keep
+meteor items queued. See `docs/meteor-research.md` for exact hook contracts and evidence.
 
 - **Checks:** 15 per-run wave milestones (optional every-Nth-wave extras) and up to 14 lifetime-kill checks.
 - **Goal:** collect N Gold Records, then clear the goal wave in one run.
 - **Items:** Gold Records, Disco Fever, Mirror Ball Shield, Groovy Vibes; Slow-Mo, Fast-Forward, Molasses and
-  Blackout (98%) traps.
+  Blackout (98%) traps, plus the optional Meteor Trap.
 - **DeathLink:** 25% send / 40% receive (options), only while in a run; shields block one. All confirmed in-game.
 - **On-screen pop-ups:** items sent/received, effects, DeathLink, goal.
 - **Tooling:** one-click install and update (Windows + Linux), plain-language options in the Options Creator.
@@ -95,6 +115,8 @@ v0.1.0 works on Windows and Linux and has been played with friends.
 
 ## Next
 
+- Complete the remaining batch, pause/menu/death/song/arena and Linux/Proton live checks in `docs/meteor.md`.
+- Cars remain a later feature; do not expand this into a generic hazard framework.
 - Watch long runs: does the wave count survive song changes?
 - More traps: enemy surge, hiding the beat indicator, forced outfit.
 - Songs, arenas or moves as items (move locking failed in early research; needs another approach).

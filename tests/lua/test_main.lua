@@ -103,6 +103,8 @@ end
 local statics = object("Default__GameplayStatics", {dilation = 1.0})
 function statics:SetGlobalTimeDilation(_, speed) self.dilation = speed end
 function statics:GetGlobalTimeDilation() return self.dilation end
+function statics:GetPlayerPawn() return self.controlled_pawn end
+function statics:GetPlayerController() return self.local_controller end
 functions["/Script/Engine.Default__GameplayStatics"] = statics
 local library = object("Default__PagodaCombatFunctionLibrary", {calls = {}})
 function library:ApplySetByCallerEffect(target, effect, tag, value)
@@ -153,6 +155,25 @@ local function read_status()
 end
 
 -- ----- scenario ------------------------------------------------------------------------
+-- meteor.lua has its own native-contract harness. Here exercise the main-loop/event
+-- integration with a controllable lifetime, independently of wall-clock trap duration.
+local fake_meteor = {active = nil, starts = 0, stops = 0, ready_reason = nil, done = nil}
+function fake_meteor:ready()
+    if self.ready_throws then error("test readiness unavailable") end
+    return not self.ready_reason, self.ready_reason
+end
+function fake_meteor:start(p, state, on_launch)
+    if self.start_throws then error("native meteor setup unavailable") end
+    if self.fail_reason then return false, self.fail_reason end
+    self.last_player, self.on_launch = p, on_launch
+    self.active = {}; self.starts = self.starts + 1
+    local count = self.count or 1
+    if on_launch then on_launch(1, count) end
+    return true, count
+end
+function fake_meteor:stop() self.active = nil; self.stops = self.stops + 1 end
+function fake_meteor:tick() local done = self.done; self.done = nil; return done end
+package.loaded.meteor = {new = function() return fake_meteor end}
 dofile(root .. "/mod/DeadAsDiscoAP/Scripts/main.lua")
 check(#scheduled == 1, "main loop schedules its next tick")
 tick(1)
@@ -173,6 +194,7 @@ local pc = object("BP_PagodaPlayerController_C /Game/Level.PersistentLevel.PC_1"
 world.BP_PagodaGameState_InfiniteDisco_C = state
 world.BP_PagodaPlayerCharacter_Charlie_C = charlie
 world.BP_PagodaPlayerController_C = pc
+statics.controlled_pawn, statics.local_controller = charlie, pc
 
 hooks[GS .. ":ReinitDiscoState"](param(state))
 state.round = 1
@@ -296,6 +318,18 @@ file:close()
 tick(1)
 check(charlie.CustomTimeDilation == 0.6, "commands after a client restart are read")
 
+-- Level-end arrives before the UObject disappears. Polling its old round must not restart a run.
+hooks[GS .. ":HandleLevelEnded"](param(state))
+tick(8)
+check(not read_status().in_run, "old state cannot restart a run after HandleLevelEnded")
+check(charlie.CustomTimeDilation == 1.0, "level-end immediately reverts the active effect")
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+hooks[GS .. ":AdvanceRound"](param(state))
+command({type = "effect", effect = "molasses", duration = 30})
+tick(4)
+check(read_status().in_run and charlie.CustomTimeDilation == 0.6, "explicit new round releases the end latch")
+
 -- Leaving Arcade ends the run.
 world.BP_PagodaGameState_InfiniteDisco_C = nil
 state._valid = false
@@ -307,6 +341,157 @@ keybinds.HOME()
 tick(1)
 local logs = events_of("log")
 check(logs[#logs].text:find("status:", 1, true) ~= nil, "Ctrl+Home logs a status line")
+
+-- Meteor admission, exclusivity, native completion and run-end cleanup.
+state._valid = true
+world.BP_PagodaGameState_InfiniteDisco_C = state
+state.round = 0
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+state.bWaveClearedRequested = false
+hooks[GS .. ":AdvanceRound"](param(state))
+tick(4)
+check(read_status().effects[6] == "meteor" and read_status().meteor_ready, "meteor capability/readiness advertised")
+for _, reason in ipairs({"spawn_blocked", "asset_unavailable", "spawn_failed"}) do
+    fake_meteor.fail_reason = reason
+    command({type = "effect", effect = "meteor"})
+    tick()
+    check(events_of("effect_failed")[#events_of("effect_failed")].reason == reason and fake_meteor.starts == 0,
+        "meteor " .. reason .. " reaches client without Lua path or table-address prefixes")
+end
+fake_meteor.fail_reason = nil
+fake_meteor.start_throws = true
+command({type = "effect", effect = "meteor"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "spawn_failed" and fake_meteor.starts == 0,
+    "unexpected meteor setup exceptions become clean spawn_failed refusals")
+check(events_of("log")[#events_of("log")].text:find("native meteor setup unavailable", 1, true) ~= nil,
+    "meteor setup diagnostic detail remains in the log")
+fake_meteor.start_throws = nil
+fake_meteor.ready_throws = true
+command({type = "effect", effect = "meteor"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "spawn_failed" and fake_meteor.starts == 0,
+    "meteor readiness exceptions become clean spawn_failed refusals")
+fake_meteor.ready_throws = nil
+local original_set_speed = statics.SetGlobalTimeDilation
+function statics:SetGlobalTimeDilation() error("native speed failure") end
+command({type = "effect", effect = "slowmo"})
+tick()
+local ordinary_failure = events_of("effect_failed")[#events_of("effect_failed")].reason
+check(ordinary_failure:find("native speed failure", 1, true) ~= nil,
+    "ordinary effect failures retain their existing diagnostic message")
+statics.SetGlobalTimeDilation = original_set_speed
+fake_meteor.ready_reason = "paused"
+command({type = "effect", effect = "meteor"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "paused" and fake_meteor.starts == 0,
+    "pause defers meteor before native spawn")
+fake_meteor.ready_reason = nil
+state.bWaveClearedRequested = true
+command({type = "effect", effect = "meteor"})
+tick()
+check(events_of("effect_failed")[#events_of("effect_failed")].reason == "downtime", "wave downtime defers meteor")
+state.bWaveClearedRequested = false
+command({type = "effect", effect = "blackout", duration = 10})
+command({type = "effect", effect = "meteor"})
+tick()
+check(fake_meteor.starts == 0, "meteor cannot replace Blackout and hide its warning")
+hooks[GS .. ":HandleLevelRestarted"](param(state))
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 2
+hooks[GS .. ":AdvanceRound"](param(state))
+-- A valid leftover pawn may be listed first after a restart. It must not be targeted.
+world.BP_PagodaPlayerCharacter_Charlie_C = object("stale Charlie", {CustomTimeDilation = 1})
+fake_meteor.count = 3
+command({type = "effect", effect = "meteor", duration = 1})
+tick(4)
+check(fake_meteor.last_player == charlie, "meteor targets the controlled pawn, not a valid leftover Charlie")
+check(fake_meteor.starts == 1 and read_status().effect == "meteor" and not read_status().meteor_ready,
+    "one meteor owns the effect slot until native completion")
+local meteor_start = events_of("effect_start")[#events_of("effect_start")]
+check(meteor_start.meteor_count == 3 and type(meteor_start.meteor_count) == "number" and meteor_start.duration == nil,
+    "one meteor batch start advertises its numeric count without a wall-clock duration")
+local meteor_popup = widgets_created[#widgets_created].WidgetTree.RootWidget.child
+local _, initial_warning_count = meteor_popup.shown:gsub("METEOR 1 OF 3!", "")
+check(initial_warning_count == 1, "first meteor warning appears once despite first-launch callback")
+local starts_before_later_launch = #events_of("effect_start")
+fake_meteor.on_launch(2, 3)
+tick()
+check(meteor_popup.shown:match("([^\n]*)$") == "METEOR 2 OF 3! Move from the marked spot!",
+    "later meteor callback shows its numbered warning")
+check(#events_of("effect_start") == starts_before_later_launch,
+    "later meteors retain the original item lifecycle without another effect_start")
+command({type = "effect", effect = "meteor"})
+command({type = "effect", effect = "blackout"})
+tick()
+check(fake_meteor.starts == 1 and fake_meteor.active, "manual commands cannot overlap or replace a meteor")
+fake_meteor.done = "native_finished"
+tick(4)
+check(read_status().effect == nil and events_of("effect_end")[#events_of("effect_end")].reason == "native_finished",
+    "native completion acknowledges effect end")
+command({type = "effect", effect = "meteor"})
+tick()
+local stops_before = fake_meteor.stops
+hooks[GS .. ":HandleLevelEnded"](param(state))
+tick(4)
+check(fake_meteor.stops == stops_before + 1 and not read_status().in_run, "run end cleans meteor once and stays ended")
+
+-- A missing or broken optional meteor adapter must not prevent the original mod loading.
+-- Reload only this narrow initialization scenario, discarding the previous scheduled loop.
+local real_require, real_dofile = require, dofile
+for _, failure in ipairs({"missing_file", "constructor_failure", "nil_adapter"}) do
+    scheduled, hooks = {}, {}
+    state.round, state.bWaveClearedRequested = 0, false
+    local output_before = #output
+    if failure == "missing_file" then
+        package.loaded.meteor = nil
+        require = function(name)
+            if name == "meteor" then error("test meteor module unavailable") end
+            return real_require(name)
+        end
+        dofile = function(path)
+            if path:match("meteor%.lua$") then error("test meteor file unavailable") end
+            return real_dofile(path)
+        end
+    else
+        package.loaded.meteor = {new = function()
+            if failure == "constructor_failure" then error("test meteor constructor unavailable") end
+            return nil
+        end}
+    end
+    local loaded, why = pcall(real_dofile, root .. "/mod/DeadAsDiscoAP/Scripts/main.lua")
+    require, dofile = real_require, real_dofile
+    check(loaded and #scheduled == 1, failure .. " preserves main mod startup: " .. tostring(why))
+    if loaded then
+        tick()
+        hooks[GS .. ":ReinitDiscoState"](param(state))
+        state.round = 1
+        hooks[GS .. ":AdvanceRound"](param(state))
+        tick(4)
+        local status = read_status()
+        local advertised = false
+        for _, key in ipairs(status.effects) do if key == "meteor" then advertised = true end end
+        check(not advertised and #status.effects == 5 and not status.meteor_ready,
+            failure .. " omits meteor capability and readiness while retaining original effects")
+        command({type = "effect", effect = "meteor"})
+        tick()
+        check(events_of("effect_failed")[#events_of("effect_failed")].reason == "unsupported",
+            failure .. " refuses meteor with a clean unsupported reason")
+        command({type = "effect", effect = "slowmo"})
+        tick()
+        check(statics.dilation == 0.6 and events_of("effect_start")[#events_of("effect_start")].effect == "slowmo",
+            failure .. " keeps ordinary traps operational")
+        hooks[GS .. ":HandleLevelEnded"](param(state))
+        tick()
+        check(statics.dilation == 1.0, failure .. " keeps ordinary trap cleanup operational")
+        local logged = false
+        for index = output_before + 1, #output do
+            if output[index]:find("meteor unavailable:", 1, true) then logged = true end
+        end
+        check(logged, failure .. " logs why meteor support is unavailable")
+    end
+end
 
 for _, line in ipairs(output) do
     if line:find("error", 1, true) and not line:find("kill stage", 1, true) then

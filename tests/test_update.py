@@ -19,7 +19,9 @@ COPY = ["install", "mod", "third_party", "dead_as_disco.apworld", "Install-Linux
 
 
 def tracked_files() -> list[str]:
-    out = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True).stdout
+    # Include newly added source files so a new module is tested before its first commit too.
+    out = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],
+                         capture_output=True, text=True, check=True).stdout
     return [line for line in out.splitlines() if not line.startswith("baseline/")]
 
 
@@ -60,12 +62,23 @@ class UpdateTest(unittest.TestCase):
 
     def check_updated(self, output: str, worlds: Path) -> None:
         self.assertIn("Updated!", output)
-        installed = (self.win64 / "ue4ss" / "Mods" / "DeadAsDiscoAP" / "Scripts" / "main.lua").read_bytes()
-        self.assertEqual(installed, (ROOT / "mod" / "DeadAsDiscoAP" / "Scripts" / "main.lua").read_bytes())
+        for script in ("main.lua", "meteor.lua"):
+            installed = (self.win64 / "ue4ss" / "Mods" / "DeadAsDiscoAP" / "Scripts" / script).read_bytes()
+            self.assertEqual(installed, (ROOT / "mod" / "DeadAsDiscoAP" / "Scripts" / script).read_bytes())
         self.assertEqual((worlds / "dead_as_disco.apworld").read_bytes(), (ROOT / "dead_as_disco.apworld").read_bytes())
         self.assertTrue((self.old / "README.md").exists(), "the folder itself was refreshed")
 
-    def test_linux(self) -> None:
+    def meteor_only_old_copy(self, missing: bool = False) -> None:
+        """Leave main.lua and the APWorld identical; only the meteor module needs updating."""
+        scripts = Path("mod") / "DeadAsDiscoAP" / "Scripts"
+        shutil.copy2(ROOT / scripts / "main.lua", self.old / scripts / "main.lua")
+        meteor = self.old / scripts / "meteor.lua"
+        if missing:
+            meteor.unlink()  # releases before 0.2.0 did not ship this module
+        else:
+            meteor.write_bytes(meteor.read_bytes() + b"\n-- older meteor tuning\n")
+
+    def check_linux_update(self) -> None:
         home = self.base / "home"
         worlds = home / ".local" / "share" / "Archipelago" / "worlds"
         worlds.mkdir(parents=True)
@@ -77,21 +90,49 @@ class UpdateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.check_updated(result.stdout, worlds)
         again = run()
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         self.assertIn("Already up to date.", again.stdout, again.stdout + again.stderr)
 
-    @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
-    def test_windows(self) -> None:
+    def check_windows_update(self) -> None:
         archipelago = self.base / "Archipelago"
         (archipelago / "custom_worlds").mkdir(parents=True)
+        env = dict(os.environ, LOCALAPPDATA=str(self.base / "local_appdata"))
         run = lambda: subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
              str(self.old / "install" / "Update-DeadAsDiscoAP.ps1"), "-SourceZip", str(self.zip),
-             "-GameDir", str(self.game), "-ArchipelagoDir", str(archipelago)], capture_output=True, text=True)
+             "-GameDir", str(self.game), "-ArchipelagoDir", str(archipelago)], env=env,
+            capture_output=True, text=True)
         result = run()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.check_updated(result.stdout, archipelago / "custom_worlds")
         again = run()
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
         self.assertIn("Already up to date.", again.stdout, again.stdout + again.stderr)
+
+    def test_linux(self) -> None:
+        self.check_linux_update()
+
+    def test_linux_meteor_only_change(self) -> None:
+        self.meteor_only_old_copy()
+        self.check_linux_update()
+
+    def test_linux_adds_missing_meteor(self) -> None:
+        self.meteor_only_old_copy(missing=True)
+        self.check_linux_update()
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
+    def test_windows(self) -> None:
+        self.check_windows_update()
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
+    def test_windows_meteor_only_change(self) -> None:
+        self.meteor_only_old_copy()
+        self.check_windows_update()
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell updater")
+    def test_windows_adds_missing_meteor(self) -> None:
+        self.meteor_only_old_copy(missing=True)
+        self.check_windows_update()
 
 
 if __name__ == "__main__":

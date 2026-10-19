@@ -14,6 +14,8 @@ WORLD = ROOT / "apworld" / "dead_as_disco"
 VERSION = json.loads((WORLD / "archipelago.json").read_text())["world_version"]
 RELEASE_FILES = [
     "README.md",
+    "docs/meteor.md",
+    "docs/meteor-research.md",
     "Install.bat",
     "Uninstall.bat",
     "Update.bat",
@@ -28,6 +30,7 @@ RELEASE_FILES = [
     "install/Install-DeadAsDiscoAP.ps1",
     "mod/DeadAsDiscoAP/Scripts/main.lua",
     "mod/DeadAsDiscoAP/Scripts/json.lua",
+    "mod/DeadAsDiscoAP/Scripts/meteor.lua",
     "third_party/UE4SS_v3.0.1-1164-g5e627997.zip",
     "third_party/README.md",
 ]

@@ -6,7 +6,7 @@
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
 --   Ctrl+F9 disco fever  Ctrl+F10 kill yourself (a real death: it goes out over DeathLink)
 
-local VERSION = "0.1.0"
+local VERSION = "0.2.0"
 local TEST_HOTKEYS = false -- off for real sessions; the client's /testeffect and /testkill still work
 
 local GAME_STATE_CLASS = "BP_PagodaGameState_InfiniteDisco_C"
@@ -33,6 +33,7 @@ local function log(message)
 end
 
 local json
+local meteor
 do
     local ok, result = pcall(require, "json")
     if not ok then
@@ -40,6 +41,16 @@ do
         result = dofile(here .. "json.lua")
     end
     json = result
+    local loaded, adapter = pcall(function()
+        local found, module = pcall(require, "meteor")
+        if not found then
+            local here = debug.getinfo(1, "S").source:match("^@?(.*[\\/])") or ""
+            module = dofile(here .. "meteor.lua")
+        end
+        return assert(module.new(log), "meteor adapter construction returned nil")
+    end)
+    if loaded then meteor = adapter
+    else log("meteor unavailable: " .. tostring(adapter)) end
 end
 
 -- The installer writes the bridge folder into bridge_dir.txt next to the Scripts folder; the
@@ -185,8 +196,6 @@ local function cached_find(key, short_class)
 end
 
 local function game_state() return cached_find("state", GAME_STATE_CLASS) end
-local function player() return cached_find("player", PLAYER_CLASS) end
-local function controller() return cached_find("controller", CONTROLLER_CLASS) end
 
 local gameplay_statics = nil
 local function statics()
@@ -196,11 +205,25 @@ local function statics()
     return gameplay_statics
 end
 
+-- A restart can leave an old Charlie UObject valid. Resolve the controlled pawn
+-- from the current world instead of taking the first actor of its class.
+local function player()
+    local state = game_state()
+    if valid(state) then cached.player = statics():GetPlayerPawn(state, 0) end
+    return valid(cached.player) and cached.player or nil
+end
+
+local function controller()
+    local state = game_state()
+    if valid(state) then cached.controller = statics():GetPlayerController(state, 0) end
+    return valid(cached.controller) and cached.controller or cached_find("controller", CONTROLLER_CLASS)
+end
+
 ---------------------------------------------------------------------------------------------
 -- Run tracking
 ---------------------------------------------------------------------------------------------
 
-local run = {active = false, round = 0, cleared = 0, dead = false}
+local run = {active = false, round = 0, cleared = 0, dead = false, ended = false}
 
 local end_effect -- forward declaration
 
@@ -215,13 +238,16 @@ local function reset_run(reason)
     if run.active or run.cleared > 0 then
         emit({type = "run_end", reason = reason, cleared = run.cleared})
     end
-    run = {active = false, round = 0, cleared = 0, dead = false}
+    run = {active = false, round = 0, cleared = 0, dead = false, ended = true}
     end_effect("run_ended")
 end
 
 local function observe_round(round)
+    -- A level-end callback can precede destruction of its state. Its stale round must
+    -- not reactivate effects while the menu or next scene is opening.
+    if run.ended then return end
     if type(round) ~= "number" then return end
-    if round < run.round then reset_run("new_run") end
+    if round < run.round then reset_run("new_run"); run.ended = false end
     if round == run.round then return end
     if run.dead and round > run.round then
         run.dead = false -- the game moved on to another wave, so the player got back up
@@ -250,6 +276,23 @@ end
 
 local active_effect = nil -- {key, command_id, ends_at, revert}
 local popup -- defined with the pop-ups below
+local SUPPORTED_EFFECTS = {"slowmo", "fastforward", "molasses", "blackout", "fever"}
+if meteor then SUPPORTED_EFFECTS[#SUPPORTED_EFFECTS + 1] = "meteor" end
+
+local function meteor_ready()
+    if not meteor then return false, "unsupported" end
+    if not in_run() then return false, "not_in_run" end
+    if active_effect then return false, "busy" end
+    local ok, ready, reason = pcall(function()
+        if game_state().bWaveClearedRequested then return false, "downtime" end
+        return meteor:ready(player())
+    end)
+    if not ok then
+        log("meteor readiness failed: " .. tostring(ready))
+        return false, "spawn_failed"
+    end
+    return ready, reason
+end
 
 local EFFECT_POPUPS = {
     slowmo = "SLOW-MO! Everything slows down",
@@ -257,7 +300,12 @@ local EFFECT_POPUPS = {
     molasses = "MOLASSES! You're stuck in slow motion",
     blackout = "BLACKOUT!",
     fever = "DISCO FEVER! Enemies slowed",
+    meteor = "METEOR INCOMING! Move away from this spot!",
 }
+
+local function meteor_warning(index, count)
+    return string.format("METEOR %d OF %d! Move from the marked spot!", index, count)
+end
 
 local function world_context()
     local p = player()
@@ -287,6 +335,17 @@ local function camera_fade(from_alpha, to_alpha, hold)
 end
 
 local EFFECTS = {
+    meteor = {
+        apply = function()
+            if not meteor then error({reason = "unsupported"}) end
+            local ok, count_or_reason = meteor:start(player(), game_state(), function(index, count)
+                if index > 1 then popup(meteor_warning(index, count)) end
+            end)
+            if not ok then error({reason = count_or_reason}) end
+            return count_or_reason
+        end,
+        revert = function() if meteor then meteor:stop("effect_ended") end end,
+    },
     slowmo = {
         apply = function() return set_global_speed(SLOWMO_SPEED) end,
         revert = function() set_global_speed(1.0) end,
@@ -336,19 +395,43 @@ local function start_effect(key, duration, command_id)
         emit({type = "effect_failed", effect = key, command_id = command_id, reason = "not_in_run"})
         return
     end
+    -- A meteor owns the warning, flight and kickable remnant as one effect. Manual test
+    -- commands must obey the same exclusivity as the AP queue, including Blackout.
+    if key == "meteor" or (active_effect and active_effect.key == "meteor") then
+        local ready, reason = meteor_ready()
+        if not ready then
+            emit({type = "effect_failed", effect = key, command_id = command_id, reason = reason})
+            return
+        end
+    end
     end_effect("replaced")
     local ok, result = pcall(definition.apply)
     if not ok then
-        emit_log("effect " .. key .. " failed: " .. tostring(result))
-        emit({type = "effect_failed", effect = key, command_id = command_id, reason = tostring(result)})
+        local reason = tostring(result)
+        local detail = reason
+        if key == "meteor" then
+            reason = "spawn_failed"
+            if type(result) == "table" then
+                local code = result.reason
+                detail = tostring(result.detail or code or result)
+                local known = {spawn_blocked = true, asset_unavailable = true, spawn_failed = true,
+                    unsupported = true, busy = true, paused = true, airborne = true, downtime = true, not_in_run = true}
+                if known[code] then reason = code end
+            end
+        end
+        emit_log("effect " .. key .. " failed: " .. detail)
+        emit({type = "effect_failed", effect = key, command_id = command_id, reason = reason})
         pcall(definition.revert)
         return
     end
     duration = math.max(1, math.min(tonumber(duration) or 15, 120))
-    active_effect = {key = key, command_id = command_id, ends_at = os.time() + duration, revert = definition.revert}
-    emit({type = "effect_start", effect = key, command_id = command_id, value = tostring(result), duration = duration})
-    popup(EFFECT_POPUPS[key] .. " (" .. duration .. "s)")
-    log("effect " .. key .. " on for " .. duration .. "s (value " .. tostring(result) .. ")")
+    active_effect = {key = key, command_id = command_id, revert = definition.revert}
+    if key ~= "meteor" then active_effect.ends_at = os.time() + duration end
+    emit({type = "effect_start", effect = key, command_id = command_id, value = tostring(result),
+        duration = key ~= "meteor" and duration or nil, meteor_count = key == "meteor" and result or nil})
+    popup(key == "meteor" and meteor_warning(1, result) or (EFFECT_POPUPS[key] .. " (" .. duration .. "s)"))
+    log("effect " .. key .. (key == "meteor" and " on (native lifecycle)" or (" on for " .. duration .. "s"))
+        .. " (value " .. tostring(result) .. ")")
 end
 
 ---------------------------------------------------------------------------------------------
@@ -452,9 +535,14 @@ local function state_hook(name)
     return function(context)
         local state = context:get()
         if not valid(state) then return end
+        if valid(cached.state) and cached.state:GetAddress() ~= state:GetAddress() then
+            reset_run("state_changed")
+            cached.player, cached.controller = nil, nil
+        end
         cached.state = state
         if name == "ReinitDiscoState" then
             reset_run("reinit")
+            run.ended = false
             run.round = read_round(state) or 0
         elseif name == "HandleLevelEnded" or name == "HandleLevelRestarted" then
             reset_run(name)
@@ -462,6 +550,7 @@ local function state_hook(name)
             local round = read_round(state)
             if round and round >= 1 and not run.dead then report_cleared(round) end
         else
+            run.ended = false -- AdvanceRound explicitly starts/resumes gameplay.
             observe_round(read_round(state))
         end
     end
@@ -627,6 +716,7 @@ local function write_status()
         version = VERSION, session = session, t = os.time(), in_run = in_run(),
         round = run.round, cleared = run.cleared, dead = run.dead,
         effect = active_effect and active_effect.key or nil,
+        effects = SUPPORTED_EFFECTS, meteor_ready = meteor_ready(),
         kill_pending = pending_kill ~= nil,
     }))
     file:close()
@@ -661,7 +751,10 @@ local function tick()
         pending_kills = 0
     end
 
-    if active_effect and os.time() >= active_effect.ends_at then end_effect("expired") end
+    if active_effect and active_effect.key == "meteor" then
+        local reason = meteor:tick(player(), game_state(), in_run())
+        if reason then end_effect(reason) end
+    elseif active_effect and os.time() >= active_effect.ends_at then end_effect("expired") end
 
     if pending_kill then
         pending_kill.ticks = pending_kill.ticks + 1

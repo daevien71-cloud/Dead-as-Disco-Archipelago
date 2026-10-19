@@ -25,8 +25,10 @@ Dead as Disco:
   # Percentage of non-Gold-Record items that are traps, and which traps.
   trap_percentage: 35
   enabled_traps: ["Slow-Mo Trap", "Fast-Forward Trap", "Molasses Trap", "Blackout Trap"]
+  # Optional experimental trap: add "Meteor Trap" above for 1–5 meteors per item, arriving one at a time.
+  # Update both the game mod and dead_as_disco.apworld first; meteors are off by default.
 
-  # Seconds that traps and Disco Fever last.
+  # Seconds that speed/screen traps and Disco Fever last. Meteor batches have their own game-time limits.
   effect_duration: 15
 
   # DeathLink, with a chance on each side.

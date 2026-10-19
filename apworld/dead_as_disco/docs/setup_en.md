@@ -60,8 +60,25 @@ mod is running. In the client window:
 
 - `/disco`: Gold Records, kills, shields and queued effects.
 - `/testeffect slowmo` (or fastforward, molasses, blackout, fever): try an effect during a run.
+- `/testeffect meteor`: try a random batch of **1–5 meteors** while on the ground during Arcade combat.
+  They arrive one at a time; dodge each warning, whose target stays where you stood when that meteor launched.
+  Requires the updated game mod as well as the updated APWorld.
 - `/testdeathlink`: pretend a friend died. Goes to your slot only, then rolls your receive chance like a real one.
 - `/testkill`: die right away. This is a real death, so it can go out to everyone over DeathLink.
 
 The mod also has Ctrl+F5 to F10 test keys for the effects and a kill. They're off by default; set
 `TEST_HOTKEYS = true` near the top of `mod/DeadAsDiscoAP/Scripts/main.lua` (and reinstall) to turn them on.
+
+Meteor Trap is off by default. To include it in a new multiworld, add `"Meteor Trap"` to `enabled_traps`
+in your YAML. One item chooses 1–5 meteors once; the batch has its own time limits instead of using
+`effect_duration`, and waits through menus, pauses, downtime, and airborne movement. The next meteor waits
+for the previous one and its remnant to disappear, with at least 3 seconds of game time between launches.
+Pauses stop the batch clock; leaving Arcade cancels the remaining meteors. Other effects wait for the whole
+batch, and reconnecting does not spend or replay it again. If an older mod is running, the client keeps the item queued and
+shows one update notice. Update the game mod and APWorld together before testing it with friends.
+
+The native attack has base damage of 10 to you and 60 to enemies; normal game modifiers still apply.
+Meteor kills use the regular kill checks, and a meteor death uses the normal DeathLink send chance once.
+Failure to load/spawn the first meteor retries after 3 seconds, up to 3 attempts; the client reports a skipped
+item if all three fail, then continues the queue. Menus, pauses, downtime and airborne movement do not use
+these attempts. Once the batch starts, later failed launches may be skipped without replaying the item.

@@ -22,6 +22,14 @@ STALE_DEATH_SECONDS = 20.0
 EFFECT_START_TIMEOUT = 6.0
 EFFECT_GAP_SECONDS = 3.0
 GOAL_HINT_REPEAT_SECONDS = 30.0
+TEMPORARY_EFFECT_FAILURES = {"busy", "paused", "airborne", "downtime", "not_in_run"}
+METEOR_RETRYABLE_START_FAILURES = {"spawn_blocked", "asset_unavailable", "spawn_failed"}
+METEOR_START_MAX_ATTEMPTS = 3
+
+
+def supports_meteor(status: Optional[dict[str, Any]]) -> bool:
+    effects = (status or {}).get("effects")
+    return isinstance(effects, list) and "meteor" in effects
 
 
 @dataclass
@@ -33,6 +41,9 @@ class SavedState:
     goal_sent: bool = False
     last_event_session: Optional[str] = None
     last_event_seq: int = 0
+    pending_meteor: Optional[dict[str, Any]] = None
+    meteor_start_failures: int = 0
+    meteor_retry_at: float = 0.0
 
 
 @dataclass
@@ -59,6 +70,7 @@ class PendingEffect:
     item_name: str
     sent_at: float
     started: bool = False
+    consumed: bool = False
 
 
 @dataclass
@@ -76,6 +88,7 @@ class Tracker:
     next_effect_at: float = field(init=False, default=0.0)
     deathlink_kill_at: float = field(init=False, default=-1e9)
     goal_hint_at: float = field(init=False, default=-1e9)
+    meteor_update_notified: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self.state = SavedState()
@@ -87,8 +100,18 @@ class Tracker:
                 self.state = SavedState(**{k: v for k, v in saved.items() if k in SavedState.__dataclass_fields__})
             except (OSError, ValueError, TypeError):
                 self.log("Could not read saved progress; starting fresh.")
+        if self.state.pending_meteor:
+            try:
+                pending = PendingEffect(**self.state.pending_meteor)
+                if pending.effect == "meteor":
+                    self.pending_effect = pending
+            except (TypeError, ValueError):
+                self.log("Could not restore the pending meteor command.")
+        self.next_effect_at = self.state.meteor_retry_at
 
     def save(self) -> None:
+        pending = self.pending_effect
+        self.state.pending_meteor = asdict(pending) if pending and pending.effect == "meteor" else None
         if self.state_path:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.state_path.with_suffix(".tmp")
@@ -209,13 +232,21 @@ class Tracker:
 
     # ----- effects -----------------------------------------------------------------------
 
-    def next_effect_to_send(self, in_run: bool) -> Optional[tuple[str, str]]:
+    def next_effect_to_send(self, in_run: bool, status: Optional[dict[str, Any]] = None) -> Optional[tuple[str, str]]:
         """(item name, effect key) to send now, or None."""
         now = self.clock()
+        # The native meteor can outlive wall-clock timeouts while the game is paused. This also
+        # protects an in-flight meteor after a client restart, when PendingEffect is no longer present.
+        if status and status.get("effect") == "meteor":
+            return None
         if self.pending_effect:
             p = self.pending_effect
+            if p.effect == "meteor" and p.started and not status:
+                return None  # no heartbeat is not evidence that the native actor has finished
             if not p.started and now - p.sent_at > EFFECT_START_TIMEOUT:
                 self.pending_effect = None  # game didn't answer; try again later
+                if p.effect == "meteor":
+                    self.save()
             elif p.started and now - p.sent_at > self.settings.effect_duration + 15:
                 self.finish_effect()  # never heard the end; assume it ran
             else:
@@ -225,10 +256,24 @@ class Tracker:
         queue = self.effect_queue()
         if not queue:
             return None
-        return queue[0], ITEM_EFFECTS[queue[0]]
+        effect = ITEM_EFFECTS[queue[0]]
+        if effect == "meteor":
+            if not supports_meteor(status):
+                if status and not self.meteor_update_notified:
+                    self.log("Meteor Trap is waiting: update the game mod to a version with meteor support. "
+                             "Your queued item has been kept.")
+                    self.meteor_update_notified = True
+                return None
+            if status.get("meteor_ready") is not True:
+                return None
+        return queue[0], effect
 
     def effect_sent(self, command_id: int, item_name: str, effect: str) -> None:
         self.pending_effect = PendingEffect(command_id, effect, item_name, self.clock())
+        if effect == "meteor":
+            # Restore the command across reconnects even if its start acknowledgement has not
+            # reached the client yet. Replayed native events can then consume the correct item.
+            self.save()
 
     def on_effect_event(self, event: dict[str, Any]) -> None:
         p = self.pending_effect
@@ -236,21 +281,53 @@ class Tracker:
             return
         kind = event["type"]
         if kind == "effect_start":
+            if p.started:
+                return
             p.started = True
+            if p.effect == "meteor":
+                # A meteor is spent once its warning starts. Persist now so restarting the client
+                # cannot launch the same destructive trap again while its native remnant still exists.
+                p.consumed = True
+                self.state.effects_done += 1
+                self.save()
             self.log(f"{p.item_name} is active!")
         elif kind == "effect_end":
             self.log(f"{p.item_name} wore off.")
             self.finish_effect()
         elif kind == "effect_failed":
             reason = event.get("reason", "unknown")
-            if reason == "not_in_run":
-                self.pending_effect = None  # the run ended first; keep it for the next run
+            if p.effect == "meteor" and not p.started and not p.consumed and reason in METEOR_RETRYABLE_START_FAILURES:
+                self.state.meteor_start_failures += 1
+                attempts = self.state.meteor_start_failures
+                if attempts < METEOR_START_MAX_ATTEMPTS:
+                    self.pending_effect = None
+                    self.next_effect_at = self.clock() + EFFECT_GAP_SECONDS
+                    self.state.meteor_retry_at = self.next_effect_at
+                    self.log(f"{p.item_name} could not start ({reason}, attempt {attempts}/{METEOR_START_MAX_ATTEMPTS}); "
+                             "keeping the item and retrying in 3 seconds.")
+                    self.save()
+                    return
+                self.log(f"{p.item_name} skipped after {METEOR_START_MAX_ATTEMPTS} failed start attempts ({reason}). "
+                         "This item is consumed so the remaining effects can continue.")
+                self.finish_effect()
+                return
+            if reason in TEMPORARY_EFFECT_FAILURES:
+                self.pending_effect = None  # not started; keep it for the next safe opportunity
+                self.next_effect_at = self.clock() + EFFECT_GAP_SECONDS
+                if p.effect == "meteor":
+                    self.save()
                 return
             self.log(f"{p.item_name} could not be applied in-game: {reason}")
             self.finish_effect()
 
     def finish_effect(self) -> None:
+        pending = self.pending_effect
+        if pending is None:
+            return
         self.pending_effect = None
-        self.state.effects_done += 1
+        if not pending.consumed:
+            self.state.effects_done += 1
+        self.state.meteor_start_failures = 0
+        self.state.meteor_retry_at = 0.0
         self.next_effect_at = self.clock() + EFFECT_GAP_SECONDS
         self.save()

@@ -27,6 +27,7 @@ class FakeGame:
         self.in_run = False
         self.cleared = 0
         self.commands_seen: list[dict] = []
+        self.meteor_command: dict | None = None
         self.offset = 0
         self.stop = threading.Event()
         (self.dir / "events.jsonl").write_text(json.dumps({"type": "hello", "session": "fake"}) + "\n")
@@ -41,7 +42,10 @@ class FakeGame:
     def loop(self) -> None:
         while not self.stop.is_set():
             (self.dir / "status.json").write_text(json.dumps(
-                {"t": time.time(), "in_run": self.in_run, "round": self.cleared + 1, "cleared": self.cleared}))
+                {"t": time.time(), "in_run": self.in_run, "round": self.cleared + 1, "cleared": self.cleared,
+                 "effects": ["slowmo", "fastforward", "molasses", "blackout", "fever", "meteor"],
+                 "meteor_ready": self.in_run and self.meteor_command is None,
+                 "effect": "meteor" if self.meteor_command else ""}))
             path = self.dir / "commands.jsonl"
             if path.exists():
                 data = path.read_bytes()
@@ -55,11 +59,20 @@ class FakeGame:
     def handle(self, command: dict) -> None:
         self.commands_seen.append(command)
         if command["type"] == "effect":
-            self.emit(type="effect_start", effect=command["effect"], command_id=command["id"])
-            self.emit(type="effect_end", effect=command["effect"], command_id=command["id"], reason="expired")
+            if command["effect"] == "meteor":
+                self.meteor_command = command
+                self.emit(type="effect_start", effect="meteor", command_id=command["id"], meteor_count=5)
+            else:
+                self.emit(type="effect_start", effect=command["effect"], command_id=command["id"])
+                self.emit(type="effect_end", effect=command["effect"], command_id=command["id"], reason="expired")
         elif command["type"] == "kill":
             self.in_run = False
             self.emit(type="death")
+
+    def finish_meteor(self) -> None:
+        command, self.meteor_command = self.meteor_command, None
+        assert command is not None
+        self.emit(type="effect_end", effect="meteor", command_id=command["id"], meteor_count=5, reason="native_finished")
 
 
 def wait_for(predicate, what: str, timeout: float = 20) -> None:
@@ -86,7 +99,8 @@ Dead as Disco:
   death_link: true
   death_link_send_chance: 100
   death_link_receive_chance: 100
-  start_inventory: {Gold Record: 1, Slow-Mo Trap: 1}
+  effect_duration: 5
+  start_inventory: {Gold Record: 1, Slow-Mo Trap: 1, Meteor Trap: 1, Blackout Trap: 1}
 """)
     (players / "b.yaml").write_text("""name: DiscoFriend
 game: Dead as Disco
@@ -107,7 +121,7 @@ Dead as Disco:
     def start(name: str, args: list[str]) -> subprocess.Popen:
         proc = subprocess.Popen([python, *args], cwd=ap, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-        logs[name] = []
+        logs.setdefault(name, [])
 
         def pump() -> None:
             for line in proc.stdout:
@@ -131,8 +145,9 @@ Dead as Disco:
             {"type": "wave", "wave": 40, "seq": 2}]))
         game_b = FakeGame(work / "bridge_b")
         launch = "from worlds.dead_as_disco.client import launch; import sys; launch(*sys.argv[1:])"
-        start("a", ["-c", launch, "--nogui", "--connect", f"127.0.0.1:{PORT}", "--name", "DiscoDae",
-                    "--bridge-dir", str(bridge_a)])
+        args_a = ["-c", launch, "--nogui", "--connect", f"127.0.0.1:{PORT}", "--name", "DiscoDae",
+                  "--bridge-dir", str(bridge_a)]
+        client_a = start("a", args_a)
         start("b", ["-c", launch, "--nogui", "--connect", f"127.0.0.1:{PORT}", "--name", "DiscoFriend",
                     "--bridge-dir", str(game_b.dir)])
         wait_for(lambda: seen("a", "Goal: collect 1 Gold Records") and seen("b", "Goal:"), "both clients connected")
@@ -154,6 +169,32 @@ Dead as Disco:
         wait_for(lambda: any(c.get("effect") == "slowmo" for c in game_a.commands_seen), "slow-mo trap sent in run")
         wait_for(lambda: seen("a", "Slow-Mo Trap wore off"), "trap lifecycle logged")
         print("PASS trap waits for a run, then fires and ends")
+
+        wait_for(lambda: any(c.get("effect") == "meteor" for c in game_a.commands_seen), "meteor item dispatched")
+        wait_for(lambda: seen("a", "Meteor Trap is active"), "five-meteor batch started")
+        # The fake game holds one five-meteor batch past the old (5 + 15)-second watchdog and its
+        # 3-second dispatch gap. A queued Blackout must wait through the whole batch, even after restart.
+        state_path = next((bridge_a / "state").glob("*_0_1.json"))
+        time.sleep(24)
+        assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "Blackout interrupted batch"
+        state = json.loads(state_path.read_text())
+        assert state["effects_done"] == 2 and state["pending_meteor"]["consumed"], state
+        connections = sum("Goal: collect" in line for line in logs["a"])
+        client_a.stdin.write("/exit\n")
+        client_a.stdin.flush()
+        client_a.wait(timeout=10)
+        client_a = start("a", args_a)
+        wait_for(lambda: sum("Goal: collect" in line for line in logs["a"]) > connections, "A reconnected mid-batch")
+        time.sleep(1)
+        assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "restart replayed batch"
+        assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "restart interrupted batch"
+        game_a.finish_meteor()
+        wait_for(lambda: seen("a", "Meteor Trap wore off"), "meteor item completed")
+        assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "meteor repeated"
+        state = json.loads(state_path.read_text())
+        assert state["effects_done"] == 2, state
+        wait_for(lambda: any(c.get("effect") == "blackout" for c in game_a.commands_seen), "next trap after batch")
+        print("PASS five-meteor batch survives watchdog and client restart, consumes one item, then releases queue")
 
         # Waves and kills send checks; clearing the goal wave with a Gold Record finishes.
         game_a.emit(type="wave", wave=10)
@@ -191,8 +232,8 @@ Dead as Disco:
         game_a.in_run = True
         time.sleep(1.5)
         b_kills = sum(c["type"] == "kill" for c in game_b.commands_seen)
-        procs[1].stdin.write("/testdeathlink Robo\n")
-        procs[1].stdin.flush()
+        client_a.stdin.write("/testdeathlink Robo\n")
+        client_a.stdin.flush()
         # A may own Mirror Ball Shields from its own checks, so a block counts as well as a kill.
         wait_for(lambda: any(c["type"] == "kill" and c.get("source") == "Robo" for c in game_a.commands_seen)
                  or seen("a", "Shield blocked it"), "test DeathLink kills the sender or hits a shield")
@@ -204,8 +245,8 @@ Dead as Disco:
         assert not seen("b", "Robo"), "test DeathLink showed up in another player's client"
         print("PASS /testdeathlink goes only to your own slot")
 
-        procs[1].stdin.write("/disco\n")
-        procs[1].stdin.flush()
+        client_a.stdin.write("/disco\n")
+        client_a.stdin.flush()
         wait_for(lambda: seen("a", "Gold Records: 2/1"), "/disco command")
         print("PASS /disco status command")
         print("ALL E2E CHECKS PASSED")
@@ -216,7 +257,8 @@ Dead as Disco:
         raise
     finally:
         for proc in procs:
-            proc.kill()
+            if proc.poll() is None:
+                proc.kill()
 
 
 if __name__ == "__main__":

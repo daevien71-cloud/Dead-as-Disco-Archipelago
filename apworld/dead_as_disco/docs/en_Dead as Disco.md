@@ -19,9 +19,29 @@ against DeathLink.
 - **Mirror Ball Shield**: blocks the next DeathLink that would have killed you.
 - **Slow-Mo, Fast-Forward, Molasses and Blackout traps**: change the game's speed, your speed or
   darken the screen for a while. The music keeps playing at normal speed, so expect to fight off-beat.
+- **Meteor Trap (experimental, off by default)**: one item rolls **1–5 Aurora meteors**, arriving one at a time
+  with warnings and native remnants. Each targets where you stood when it launched. Update both the game mod
+  and APWorld before enabling it.
 - **Groovy Vibes**: nothing, just vibes.
 
 Traps and buffs wait until you're in an Arcade run, then fire one at a time.
+Meteors also wait for active combat and for you to be on the ground. Each trap chooses its count once and
+uses **one item for the entire batch**. The next meteor waits until the previous meteor and remnant are gone,
+with at least 3 seconds of game time between launches. Each target locks when that meteor launches; moving
+does not move its warning. Pausing stops the batch clock, and leaving the run cancels its remaining meteors.
+
+The remnant lasts at most 11 seconds, each meteor has a 16-second limit, and the whole batch has a limit of
+`20 × count + 10` seconds (up to 110), all in game time. These limits are independent of `effect_duration`.
+Other queued effects wait for the entire batch to finish. A client restart does not repeat an accepted batch.
+If the mod lacks meteor support, the item stays queued until you update.
+The native attack's base damage is **10 to the player and 60 to enemies**, subject to the game's damage
+modifiers. Meteor kills count toward the usual enemy-kill checks. If a meteor kills you, the normal DeathLink
+send chance applies once; the trap does not send an extra DeathLink.
+
+If the game cannot load or spawn the first meteor, the client keeps the item and retries after 3 seconds, for
+up to 3 attempts. After the third failed start it reports that the item was skipped and lets the queue continue.
+Pauses, downtime and airborne movement simply wait for a safe opportunity and do not spend those attempts.
+Once a batch has started it is spent; a later failed launch can skip that meteor without replaying the item.
 
 ## DeathLink
 
@@ -53,8 +73,8 @@ The name in brackets is what the option is called in the YAML file.
 | Option | What it does | Default |
 |---|---|---|
 | Trap Percentage (`trap_percentage`) | Of your non-Gold-Record items, the percent that are traps. The rest are Mirror Ball Shields, Disco Fever and Groovy Vibes. | 35 |
-| Enabled Traps (`enabled_traps`) | Which traps can appear: Slow-Mo (game at 60%), Fast-Forward (140%), Molasses (only you at 60%), Blackout (screen 98% dark). | all four |
-| Effect Duration (`effect_duration`) | Seconds each trap and Disco Fever lasts. | 15 |
+| Enabled Traps (`enabled_traps`) | Which traps can appear: Slow-Mo (game at 60%), Fast-Forward (140%), Molasses (only you at 60%), Blackout (screen 98% dark), or the experimental Meteor Trap (1–5 meteors, one at a time). Add Meteor Trap yourself after updating the mod and APWorld. | original four; meteor off |
+| Effect Duration (`effect_duration`) | Seconds the speed/screen traps and Disco Fever last. Meteor batches have their own limits in game time. | 15 |
 
 ### DeathLink
 
