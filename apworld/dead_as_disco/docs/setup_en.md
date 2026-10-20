@@ -53,12 +53,18 @@ locally. Your friends' games don't need anything extra.
 
 Keep the client open while you play: kills only count while it's running.
 
+With the v0.3.2 mod and APWorld, queued traps arrive with a random **20–30 seconds of active Arcade play
+after the preceding trap ends**. A meteor batch or both car sets count as one trap. Pauses, menus and
+between-wave downtime freeze the rest, and reconnecting resumes the saved remainder. Existing
+multiworlds work without regeneration. `/disco` shows the remaining rest. Update both parts together;
+an older game mod cannot provide this clock, so the new client holds waiting traps and asks for an update.
+
 ## Testing
 
 Ctrl+Home in the game shows a status pop-up (and writes a line to `ue4ss\UE4SS.log`), so you can check the
 mod is running. In the client window:
 
-- `/disco`: Gold Records, kills, shields and queued effects.
+- `/disco`: Gold Records, kills, shields, queued effects and remaining trap rest.
 - `/testeffect slowmo` (or fastforward, molasses, blackout, fever): try an effect during a run.
 - `/testeffect meteor`: try a random batch of **1–5 meteors** while on the ground during Arcade combat.
   They arrive one at a time; dodge each warning, whose target stays where you stood when that meteor launched.
@@ -75,6 +81,13 @@ mod is running. In the client window:
 
 The mod also has Ctrl+F5 to F10 test keys for the effects and a kill. They're off by default; set
 `TEST_HOTKEYS = true` near the top of `mod/DeadAsDiscoAP/Scripts/main.lua` (and reinstall) to turn them on.
+
+To test queue spacing, use a private test room and have its server console send two trap items, for
+example `/send YourSlotName Slow-Mo Trap` twice. Let the first finish, then expect the second after
+20–30 seconds of active combat. Pause for ten seconds during that rest: the pause must not shorten it.
+Check `/disco`, restart the client during another rest, and confirm the remaining time resumes without
+a new roll. Repeat with a meteor batch or car trap to check the rest starts after its final cleanup.
+`/testeffect` sends an immediate manual probe and does not exercise the received-item queue.
 
 Meteor Trap is off by default. To include it in a new multiworld, add `"Meteor Trap"` to `enabled_traps`
 in your YAML. One item chooses 1–5 meteors once; the batch has its own time limits instead of using

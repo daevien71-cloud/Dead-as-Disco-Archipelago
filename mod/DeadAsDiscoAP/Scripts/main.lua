@@ -6,7 +6,7 @@
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
 --   Ctrl+F9 disco fever  Ctrl+F10 kill yourself (a real death: it goes out over DeathLink)
 
-local VERSION = "0.3.1"
+local VERSION = "0.3.2"
 local TEST_HOTKEYS = false -- off for real sessions; the client's /testeffect and /testkill still work
 
 local GAME_STATE_CLASS = "BP_PagodaGameState_InfiniteDisco_C"
@@ -235,6 +235,11 @@ end
 ---------------------------------------------------------------------------------------------
 
 local run = {active = false, round = 0, cleared = 0, dead = false, ended = false}
+local play_clock = {seconds = 0, active = false, sample = nil}
+
+local function invalidate_play_clock()
+    play_clock.active, play_clock.sample = false, nil
+end
 
 local end_effect -- forward declaration
 
@@ -246,6 +251,7 @@ local function report_cleared(wave)
 end
 
 local function reset_run(reason)
+    invalidate_play_clock()
     if run.active or run.cleared > 0 then
         emit({type = "run_end", reason = reason, cleared = run.cleared})
     end
@@ -279,6 +285,48 @@ end
 
 local function in_run()
     return run.active and not run.dead and valid(game_state())
+end
+
+-- A game-session clock for queue pacing. AudioTimeSeconds is Unreal's undilated
+-- world clock, stopped by pause; it is independent of FMOD/song playback.
+local function sample_play_clock()
+    local ok, sample = pcall(function()
+        local state = game_state()
+        if not in_run() or not valid(state) then return nil end
+        local pawn = player()
+        if not valid(pawn) then return nil end
+        local world = state:GetWorld()
+        local pawn_world = pawn:GetWorld()
+        if not valid(world) or not valid(pawn_world) or world:GetAddress() ~= pawn_world:GetAddress() then return nil end
+        local now = statics():GetAudioTimeSeconds(state)
+        local paused = statics():IsGamePaused(state)
+        if type(now) ~= "number" or now ~= now or now < 0 or now == math.huge or type(paused) ~= "boolean" then
+            return nil
+        end
+        return {time = now, state = state:GetAddress(), world = world:GetAddress(),
+            active = state.bWaveClearedRequested == false and paused == false}
+    end)
+    if not ok or not sample then
+        invalidate_play_clock()
+        return play_clock.seconds
+    end
+    local previous = play_clock.sample
+    if previous and previous.state == sample.state and previous.world == sample.world then
+        if sample.time < previous.time then
+            invalidate_play_clock()
+            return play_clock.seconds
+        end
+        if previous.active and sample.active then
+            local total = play_clock.seconds + (sample.time - previous.time)
+            if total == math.huge then
+                invalidate_play_clock()
+                return play_clock.seconds
+            end
+            play_clock.seconds = total
+        end
+    end
+    play_clock.active, play_clock.sample = sample.active, sample
+    return play_clock.seconds
 end
 
 ---------------------------------------------------------------------------------------------
@@ -425,17 +473,18 @@ end_effect = function(reason)
     active_effect = nil
     local ok, err = pcall(effect.revert)
     if not ok then log("could not revert " .. effect.key .. ": " .. tostring(err)) end
-    emit({type = "effect_end", effect = effect.key, command_id = effect.command_id, reason = reason})
+    emit({type = "effect_end", effect = effect.key, command_id = effect.command_id,
+        command_session = effect.command_session, reason = reason, active_play_seconds = sample_play_clock()})
 end
 
-local function start_effect(key, duration, command_id, probe)
+local function start_effect(key, duration, command_id, probe, command_session)
     local definition = EFFECTS[key]
     if not definition then
-        emit({type = "effect_failed", effect = key, command_id = command_id, reason = "unknown effect"})
+        emit({type = "effect_failed", effect = key, command_id = command_id, command_session = command_session, reason = "unknown effect"})
         return
     end
     if not in_run() then
-        emit({type = "effect_failed", effect = key, command_id = command_id, reason = "not_in_run"})
+        emit({type = "effect_failed", effect = key, command_id = command_id, command_session = command_session, reason = "not_in_run"})
         return
     end
     -- Native traps keep the effect slot for their whole lifecycle. Manual commands
@@ -443,7 +492,7 @@ local function start_effect(key, duration, command_id, probe)
     local native = key == "meteor" or key == "cars"
     local car_probe = key == "cars" and probe == true
     if active_effect and (active_effect.key == "meteor" or active_effect.key == "cars") then
-        emit({type = "effect_failed", effect = key, command_id = command_id, reason = "busy"})
+        emit({type = "effect_failed", effect = key, command_id = command_id, command_session = command_session, reason = "busy"})
         return
     end
     if native then
@@ -451,7 +500,7 @@ local function start_effect(key, duration, command_id, probe)
         if key == "cars" then ready, reason = cars_ready()
         else ready, reason = meteor_ready() end
         if not ready then
-            emit({type = "effect_failed", effect = key, command_id = command_id, reason = reason})
+            emit({type = "effect_failed", effect = key, command_id = command_id, command_session = command_session, reason = reason})
             return
         end
     end
@@ -471,14 +520,15 @@ local function start_effect(key, duration, command_id, probe)
             end
         end
         emit_log("effect " .. key .. " failed: " .. detail)
-        emit({type = "effect_failed", effect = key, command_id = command_id, reason = reason})
+        emit({type = "effect_failed", effect = key, command_id = command_id, command_session = command_session, reason = reason})
         pcall(definition.revert)
         return
     end
     duration = math.max(1, math.min(tonumber(duration) or 15, 120))
-    active_effect = {key = key, command_id = command_id, revert = definition.revert}
+    active_effect = {key = key, command_id = command_id, command_session = command_session, revert = definition.revert}
     if not native then active_effect.ends_at = os.time() + duration end
     emit({type = "effect_start", effect = key, command_id = command_id, value = tostring(result),
+        command_session = command_session, active_play_seconds = sample_play_clock(),
         duration = not native and duration or nil, meteor_count = key == "meteor" and result or nil,
         car_sets = key == "cars" and result or nil, car_count = key == "cars" and (car_probe and 1 or 6) or nil})
     if key == "cars" then popup(cars_warning(1, result, car_probe))
@@ -575,6 +625,7 @@ local function on_player_death()
     end
     run.dead = true
     run.active = false
+    invalidate_play_clock()
     end_effect("player_died")
     emit({type = "death", round = run.round, cleared = run.cleared})
 end
@@ -601,6 +652,7 @@ local function state_hook(name)
         elseif name == "HandleLevelEnded" or name == "HandleLevelRestarted" then
             reset_run(name)
         elseif name == "OnIncursionCleared_Event" then
+            invalidate_play_clock()
             local round = read_round(state)
             if round and round >= 1 and not run.dead then report_cleared(round) end
         else
@@ -754,7 +806,7 @@ local function handle_command(command)
         last_command_id[client] = id
     end
     if command.type == "effect" then
-        start_effect(command.effect, command.duration, command.id, command.effect == "cars" and command.probe == true)
+        start_effect(command.effect, command.duration, command.id, command.effect == "cars" and command.probe == true, command.session)
     elseif command.type == "kill" then
         request_kill(command.source)
     elseif command.type == "message" then
@@ -768,6 +820,7 @@ local function write_status()
     if not file then return end
     file:write(json.encode({
         version = VERSION, session = session, t = os.time(), in_run = in_run(),
+        clock_version = 1, active_play_seconds = play_clock.seconds, active_play = play_clock.active,
         round = run.round, cleared = run.cleared, dead = run.dead,
         effect = active_effect and active_effect.key or nil,
         effects = SUPPORTED_EFFECTS, meteor_ready = meteor_ready(), cars_ready = cars_ready(),
@@ -799,6 +852,8 @@ local function tick()
             reset_run("left_arcade")
         end
     end
+
+    sample_play_clock()
 
     if pending_kills > 0 then
         emit({type = "kill", count = pending_kills})

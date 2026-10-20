@@ -4,6 +4,7 @@ No networking here, so it can be tested without a server or the game.
 """
 
 import json
+import math
 import random
 import time
 from dataclasses import asdict, dataclass, field
@@ -12,7 +13,7 @@ from typing import Any, Callable, Optional
 
 from .data import (
     GOLD_RECORD, ITEM_EFFECTS, ITEM_ID_TO_NAME, KILL_LOCATIONS, MIRROR_BALL_SHIELD, WAVE_LOCATIONS,
-    kill_location_name, wave_location_name,
+    TRAPS, kill_location_name, wave_location_name,
 )
 
 # A death this soon after we told the game to kill the player came from DeathLink.
@@ -21,6 +22,8 @@ DEATHLINK_KILL_WINDOW = 15.0
 STALE_DEATH_SECONDS = 20.0
 EFFECT_START_TIMEOUT = 6.0
 EFFECT_GAP_SECONDS = 3.0
+TRAP_REST_MIN_SECONDS = 20
+TRAP_REST_MAX_SECONDS = 30
 GOAL_HINT_REPEAT_SECONDS = 30.0
 TEMPORARY_EFFECT_FAILURES = {"busy", "paused", "airborne", "downtime", "not_in_run"}
 NATIVE_EFFECTS = {"meteor", "cars"}
@@ -47,6 +50,8 @@ class SavedState:
     pending_meteor: Optional[dict[str, Any]] = None
     meteor_start_failures: int = 0
     meteor_retry_at: float = 0.0
+    pending_effect: Optional[dict[str, Any]] = None
+    trap_rest_remaining: float = 0.0
 
 
 @dataclass
@@ -74,6 +79,7 @@ class PendingEffect:
     sent_at: float
     started: bool = False
     consumed: bool = False
+    command_session: Optional[str] = None
 
 
 @dataclass
@@ -84,6 +90,7 @@ class Tracker:
     clock: Callable[[], float] = time.time
     log: Callable[[str], None] = print
     notify: Callable[[str], None] = lambda text: None  # on-screen pop-up in the game
+    rest_rng: random.Random = field(default_factory=random.Random)
 
     state: SavedState = field(init=False)
     received: list[str] = field(init=False, default_factory=list)
@@ -92,6 +99,9 @@ class Tracker:
     deathlink_kill_at: float = field(init=False, default=-1e9)
     goal_hint_at: float = field(init=False, default=-1e9)
     native_update_notified: set[str] = field(init=False, default_factory=set)
+    rest_update_notified: bool = field(init=False, default=False)
+    _rest_cursor: Optional[tuple[str, float]] = field(init=False, default=None)
+    _clock_floor: Optional[tuple[str, float]] = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.state = SavedState()
@@ -103,18 +113,26 @@ class Tracker:
                 self.state = SavedState(**{k: v for k, v in saved.items() if k in SavedState.__dataclass_fields__})
             except (OSError, ValueError, TypeError):
                 self.log("Could not read saved progress; starting fresh.")
-        if self.state.pending_meteor:
+        journal = self.state.pending_effect or self.state.pending_meteor
+        if journal:
             try:
-                pending = PendingEffect(**self.state.pending_meteor)
-                if pending.effect in NATIVE_EFFECTS:
+                pending = PendingEffect(**journal)
+                supported = ITEM_EFFECTS.values() if self.state.pending_effect else NATIVE_EFFECTS
+                if pending.effect in supported:
                     self.pending_effect = pending
             except (TypeError, ValueError):
-                self.log("Could not restore the pending native effect command.")
+                self.log("Could not restore the pending effect command.")
+        rest = self.state.trap_rest_remaining
+        if isinstance(rest, bool) or not isinstance(rest, (int, float)) or not math.isfinite(rest) or rest < 0:
+            self.state.trap_rest_remaining = 0.0
         self.next_effect_at = self.state.meteor_retry_at
 
     def save(self) -> None:
         pending = self.pending_effect
-        self.state.pending_meteor = asdict(pending) if pending and pending.effect in NATIVE_EFFECTS else None
+        self.state.pending_effect = asdict(pending) if pending else None
+        # Retain the old native journal without new fields so older clients can still read it.
+        self.state.pending_meteor = ({k: v for k, v in asdict(pending).items() if k != "command_session"}
+                                     if pending and pending.effect in NATIVE_EFFECTS else None)
         if self.state_path:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.state_path.with_suffix(".tmp")
@@ -235,21 +253,55 @@ class Tracker:
 
     # ----- effects -----------------------------------------------------------------------
 
+    @staticmethod
+    def _clock_sample(status: Optional[dict[str, Any]]) -> Optional[tuple[str, float]]:
+        if not status or status.get("clock_version") != 1:
+            return None
+        session, seconds = status.get("session"), status.get("active_play_seconds")
+        if (not isinstance(session, str) or not session or isinstance(seconds, bool)
+                or not isinstance(seconds, (int, float)) or not math.isfinite(seconds) or seconds < 0
+                or not isinstance(status.get("active_play"), bool)):
+            return None
+        return session, float(seconds)
+
+    def _advance_trap_rest(self, status: Optional[dict[str, Any]]) -> None:
+        sample = self._clock_sample(status)
+        if sample is None:
+            return
+        previous = self._rest_cursor
+        if previous is None or previous[0] != sample[0]:
+            # Reconnects and game restarts resume the saved rest without credit for time away.
+            self._rest_cursor = sample
+            return
+        if sample[1] < previous[1]:
+            return  # a heartbeat can predate the end event; never move that anchor backwards
+        self._rest_cursor = sample
+        remaining = self.state.trap_rest_remaining
+        self.state.trap_rest_remaining = max(0.0, remaining - (sample[1] - previous[1]))
+        if math.ceil(remaining) != math.ceil(self.state.trap_rest_remaining):
+            self.save()  # at most once per elapsed second, with the final zero saved too
+
+    def observe_status(self, status: Optional[dict[str, Any]]) -> None:
+        """Sample before replaying events, so an offline completion cannot spend a new rest."""
+        sample = self._clock_sample(status)
+        if sample is not None and (self._clock_floor is None or self._clock_floor[0] != sample[0]):
+            self._clock_floor = sample
+        self._advance_trap_rest(status)
+
     def next_effect_to_send(self, in_run: bool, status: Optional[dict[str, Any]] = None) -> Optional[tuple[str, str]]:
         """(item name, effect key) to send now, or None."""
         now = self.clock()
-        # Native actor lifecycles can outlive wall-clock timeouts while the game is paused. This
-        # also protects either active batch after restart, even without a local pending command.
-        if status and status.get("effect") in NATIVE_EFFECTS:
+        self.observe_status(status)
+        # A live effect heartbeat outranks the timeout, including after a client restart.
+        if status and status.get("effect") in ITEM_EFFECTS.values():
             return None
         if self.pending_effect:
             p = self.pending_effect
-            if p.effect in NATIVE_EFFECTS and p.started and not status:
-                return None  # no heartbeat is not evidence that the native actor has finished
+            if not status:
+                return None  # no heartbeat is not evidence that a command failed or finished
             if not p.started and now - p.sent_at > EFFECT_START_TIMEOUT:
                 self.pending_effect = None  # game didn't answer; try again later
-                if p.effect in NATIVE_EFFECTS:
-                    self.save()
+                self.save()
             elif p.started and now - p.sent_at > self.settings.effect_duration + 15:
                 self.finish_effect()  # never heard the end; assume it ran
             else:
@@ -260,6 +312,16 @@ class Tracker:
         if not queue:
             return None
         effect = ITEM_EFFECTS[queue[0]]
+        if queue[0] in TRAPS:
+            sample = self._clock_sample(status)
+            if self.state.trap_rest_remaining > 0:
+                if status and sample is None and not self.rest_update_notified:
+                    self.log("Queued traps are resting: update both the game mod and APWorld for "
+                             "20–30 seconds of active play between traps. Your queued items have been kept.")
+                    self.rest_update_notified = True
+                return None
+            if status and status.get("clock_version") == 1 and (sample is None or status.get("active_play") is not True):
+                return None
         if effect in NATIVE_EFFECTS:
             if not supports_effect(status, effect):
                 if status and effect not in self.native_update_notified:
@@ -271,16 +333,21 @@ class Tracker:
                 return None
         return queue[0], effect
 
-    def effect_sent(self, command_id: int, item_name: str, effect: str) -> None:
-        self.pending_effect = PendingEffect(command_id, effect, item_name, self.clock())
-        if effect in NATIVE_EFFECTS:
-            # Restore the command across reconnects even if its start acknowledgement has not
-            # reached the client yet. Replayed native events can then consume the correct item.
-            self.save()
+    def effect_sent(self, command_id: int, item_name: str, effect: str,
+                    command_session: Optional[str] = None) -> None:
+        self.pending_effect = PendingEffect(command_id, effect, item_name, self.clock(),
+                                            command_session=command_session)
+        # The bridge calls this before appending the command. Reconnects can then match its
+        # acknowledgements even if the client exits immediately after the game accepts it.
+        self.save()
 
     def on_effect_event(self, event: dict[str, Any]) -> None:
         p = self.pending_effect
         if not p or event.get("command_id") != p.command_id:
+            return
+        if p.command_session is not None and event.get("command_session") != p.command_session:
+            return
+        if event.get("effect", p.effect) != p.effect:
             return
         kind = event["type"]
         if kind == "effect_start":
@@ -292,11 +359,11 @@ class Tracker:
                 # launch the same trap again while its actors or remaining sets still exist.
                 p.consumed = True
                 self.state.effects_done += 1
-                self.save()
+            self.save()
             self.log(f"{p.item_name} is active!")
         elif kind == "effect_end":
             self.log(f"{p.item_name} wore off.")
-            self.finish_effect()
+            self.finish_effect(completed=True, event=event)
         elif kind == "effect_failed":
             reason = event.get("reason", "unknown")
             if p.effect in NATIVE_EFFECTS and not p.started and not p.consumed and reason in NATIVE_RETRYABLE_START_FAILURES:
@@ -314,16 +381,15 @@ class Tracker:
                          "This item is consumed so the remaining effects can continue.")
                 self.finish_effect()
                 return
-            if reason in TEMPORARY_EFFECT_FAILURES and (p.effect not in NATIVE_EFFECTS or not p.started):
+            if reason in TEMPORARY_EFFECT_FAILURES and not p.started:
                 self.pending_effect = None  # not started; keep it for the next safe opportunity
                 self.next_effect_at = self.clock() + EFFECT_GAP_SECONDS
-                if p.effect in NATIVE_EFFECTS:
-                    self.save()
+                self.save()
                 return
             self.log(f"{p.item_name} could not be applied in-game: {reason}")
-            self.finish_effect()
+            self.finish_effect(event=event)
 
-    def finish_effect(self) -> None:
+    def finish_effect(self, completed: bool = False, event: Optional[dict[str, Any]] = None) -> None:
         pending = self.pending_effect
         if pending is None:
             return
@@ -333,4 +399,17 @@ class Tracker:
         self.state.meteor_start_failures = 0
         self.state.meteor_retry_at = 0.0
         self.next_effect_at = self.clock() + EFFECT_GAP_SECONDS
+        if pending.item_name in TRAPS and (completed or pending.started):
+            self.state.trap_rest_remaining = float(self.rest_rng.randint(TRAP_REST_MIN_SECONDS, TRAP_REST_MAX_SECONDS))
+            # Completion stamps exclude time spent inside the preceding trap. The ordinary
+            # heartbeat may be older; without a stamp the next heartbeat establishes a baseline.
+            self._rest_cursor = self._clock_sample({
+                "clock_version": 1, "session": (event or {}).get("game_session"),
+                "active_play": True, "active_play_seconds": (event or {}).get("active_play_seconds"),
+            })
+            if (self._rest_cursor is not None and self._clock_floor is not None
+                    and self._rest_cursor[0] == self._clock_floor[0]
+                    and self._rest_cursor[1] < self._clock_floor[1]):
+                self._rest_cursor = self._clock_floor
+            self.log(f"Next queued trap rests for {int(self.state.trap_rest_remaining)} seconds of active Arcade play.")
         self.save()

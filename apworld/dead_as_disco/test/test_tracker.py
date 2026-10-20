@@ -3,6 +3,7 @@ import random
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from ..data import (
     BLACKOUT_TRAP, DISCO_FEVER, GOLD_RECORD, ITEM_NAME_TO_ID, KILL_LOCATIONS, METEOR_TRAP, MIRROR_BALL_SHIELD,
@@ -20,6 +21,13 @@ def cars_status(ready: bool = True, active: bool = False) -> dict:
     status = meteor_status()
     status["effects"].append("cars")
     status.update(cars_ready=ready, effect="cars" if active else "")
+    return status
+
+
+def active_status(seconds: float = 0.0, session: str = "g1", **changes) -> dict:
+    status = cars_status()
+    status.update(clock_version=1, active_play_seconds=seconds, session=session, active_play=True)
+    status.update(changes)
     return status
 
 
@@ -45,13 +53,21 @@ class TrackerTest(unittest.TestCase):
         rng = random.Random()
         queue = list(rolls)
         rng.randrange = lambda n: queue.pop(0)
+        rest_rng = random.Random()
+        rest_rng.randint = Mock(return_value=25)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        return Tracker(Settings(**base), Path(self.tmp.name) / "state.json", rng=rng, clock=self.clock,
+        return Tracker(Settings(**base), Path(self.tmp.name) / "state.json", rng=rng, rest_rng=rest_rng, clock=self.clock,
                        log=self.logs.append)
 
     def event(self, tracker: Tracker, seq: int, **event):
         return tracker.handle_event(dict(event, seq=seq, game_session="g1", t=self.clock.now))
+
+    def elapse_trap_rest(self, tracker: Tracker) -> None:
+        """For legacy-event cases, establish a cursor then play through the bounded rest."""
+        self.clock.now += 3
+        tracker.next_effect_to_send(True, active_status(0))
+        tracker.next_effect_to_send(True, active_status(30))
 
     def test_wave_sends_all_lower_milestones(self) -> None:
         t = self.make()
@@ -71,13 +87,13 @@ class TrackerTest(unittest.TestCase):
         t = self.make()
         self.assertTrue(t.is_new)
         t.save()
-        self.assertFalse(Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append).is_new)
+        self.assertFalse(Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng).is_new)
 
     def test_kills_persist_across_restarts(self) -> None:
         t = self.make()
         self.event(t, 1, type="kill", count=30)
         t.save()
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         self.assertEqual(again.state.kills, 30)
         # Re-reading the same game session's events after a client restart doesn't double count.
         again.handle_event({"type": "kill", "count": 30, "seq": 1, "game_session": "g1"})
@@ -154,7 +170,7 @@ class TrackerTest(unittest.TestCase):
         t.set_received(ids(BLACKOUT_TRAP))
         t.effect_sent(1, *t.next_effect_to_send(in_run=True))
         self.clock.now += 10
-        self.assertEqual(t.next_effect_to_send(in_run=True), (BLACKOUT_TRAP, "blackout"))
+        self.assertEqual(t.next_effect_to_send(in_run=True, status={"in_run": True}), (BLACKOUT_TRAP, "blackout"))
 
     def test_meteor_waits_for_capability_without_losing_item_or_spamming(self) -> None:
         t = self.make()
@@ -201,7 +217,7 @@ class TrackerTest(unittest.TestCase):
         self.event(t, 1, type="effect_start", command_id=1)
         self.assertTrue(t.pending_effect.consumed)
         self.assertEqual(t.state.effects_done, 1)
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(ids(METEOR_TRAP, BLACKOUT_TRAP))
         self.assertEqual(again.effect_queue(), [BLACKOUT_TRAP])
         self.assertTrue(again.pending_effect.started)
@@ -213,7 +229,7 @@ class TrackerTest(unittest.TestCase):
         self.event(t, 2, type="effect_start", command_id=1)
         self.event(t, 3, type="effect_end", command_id=1)
         self.assertEqual(t.state.effects_done, 1)
-        self.clock.now += 3
+        self.elapse_trap_rest(t)
         self.assertEqual(t.next_effect_to_send(True, meteor_status()), (BLACKOUT_TRAP, "blackout"))
 
     def test_meteor_command_survives_restart_before_start_acknowledgement(self) -> None:
@@ -222,7 +238,7 @@ class TrackerTest(unittest.TestCase):
         t.set_received(received)
         t.effect_sent(7, *t.next_effect_to_send(True, meteor_status()))
         # Disconnect or restart between dispatch and the next bridge poll.
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(received)
         self.assertEqual(again.pending_effect.command_id, 7)
         self.assertFalse(again.pending_effect.started)
@@ -232,7 +248,7 @@ class TrackerTest(unittest.TestCase):
         self.assertIsNone(again.next_effect_to_send(True, meteor_status(active=True)))
         self.event(again, 2, type="effect_end", command_id=7)
         self.assertEqual(again.state.effects_done, 1)
-        after_end = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        after_end = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         after_end.set_received(received)
         self.assertIsNone(after_end.pending_effect)
         self.assertEqual(after_end.effect_queue(), [BLACKOUT_TRAP])
@@ -242,7 +258,7 @@ class TrackerTest(unittest.TestCase):
         t.set_received(ids(METEOR_TRAP))
         t.effect_sent(1, *t.next_effect_to_send(True, meteor_status()))
         self.event(t, 1, type="effect_failed", command_id=1, reason="downtime")
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(ids(METEOR_TRAP))
         self.assertIsNone(again.pending_effect)
         self.assertEqual(again.state.effects_done, 0)
@@ -252,7 +268,7 @@ class TrackerTest(unittest.TestCase):
         t = self.make()
         t.set_received(ids(METEOR_TRAP))
         t.effect_sent(1, *t.next_effect_to_send(True, meteor_status()))
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(ids(METEOR_TRAP))
         self.assertIsNone(again.next_effect_to_send(True, meteor_status()))
         self.clock.now += 10
@@ -287,7 +303,7 @@ class TrackerTest(unittest.TestCase):
         self.clock.now += 120
         self.assertIsNone(t.next_effect_to_send(True, meteor_status(active=True, ready=False)))
         self.assertIsNotNone(t.pending_effect)
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(received)
         self.assertTrue(again.pending_effect.consumed)
         self.assertEqual(again.state.effects_done, 1)
@@ -298,7 +314,7 @@ class TrackerTest(unittest.TestCase):
         self.event(again, 3, type="effect_end", command_id=7, meteor_count=5, reason="native_finished")
         self.assertEqual(again.state.effects_done, 1)
         self.assertIsNone(again.pending_effect)
-        self.clock.now += 3
+        self.elapse_trap_rest(again)
         self.assertEqual(again.next_effect_to_send(True, meteor_status()), (BLACKOUT_TRAP, "blackout"))
 
     def test_active_meteor_without_start_ack_never_gets_reissued(self) -> None:
@@ -330,11 +346,11 @@ class TrackerTest(unittest.TestCase):
         self.assertIsNone(t.next_effect_to_send(True, fresh))
         self.assertIsNone(t.pending_effect)
         self.assertEqual(t.state.effects_done, 1)
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(ids(METEOR_TRAP, BLACKOUT_TRAP))
         self.assertIsNone(again.pending_effect)
         self.assertEqual(again.effect_queue(), [BLACKOUT_TRAP])
-        self.clock.now += 3
+        self.elapse_trap_rest(t)
         self.assertEqual(t.next_effect_to_send(True, meteor_status()), (BLACKOUT_TRAP, "blackout"))
 
     def test_failed_meteor_is_consumed_once_and_queue_continues(self) -> None:
@@ -377,7 +393,7 @@ class TrackerTest(unittest.TestCase):
         t.set_received(received)
         t.effect_sent(1, *t.next_effect_to_send(True, meteor_status()))
         self.event(t, 1, type="effect_failed", command_id=1, reason="asset_unavailable")
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(received)
         self.assertEqual(again.state.meteor_start_failures, 1)
         self.assertIsNone(again.pending_effect)
@@ -394,7 +410,7 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(again.state.meteor_start_failures, 0)
         self.assertEqual(again.state.meteor_retry_at, 0)
         self.assertFalse(any("skipped after" in line for line in self.logs))
-        restored = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        restored = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         self.assertEqual(restored.state.meteor_start_failures, 0)
 
     def test_started_meteor_failure_does_not_retry_or_double_consume(self) -> None:
@@ -407,7 +423,7 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(t.state.effects_done, 1)
         self.assertEqual(t.state.meteor_start_failures, 0)
         self.assertFalse(any("retrying" in line for line in self.logs))
-        self.clock.now += 3
+        self.elapse_trap_rest(t)
         self.assertEqual(t.next_effect_to_send(True, meteor_status()), (BLACKOUT_TRAP, "blackout"))
 
     def test_normal_effect_hard_failure_still_consumes_without_meteor_retry(self) -> None:
@@ -447,7 +463,7 @@ class TrackerTest(unittest.TestCase):
         t.next_effect_to_send(True, old)
         t.effect_sent(1, *t.next_effect_to_send(True, cars_status()))
         self.event(t, 1, type="effect_end", command_id=1)
-        self.clock.now += 3
+        self.elapse_trap_rest(t)
         t.next_effect_to_send(True, old)
         t.next_effect_to_send(True, old)
         self.assertEqual(sum("update the game mod" in line for line in self.logs), 2)
@@ -471,7 +487,7 @@ class TrackerTest(unittest.TestCase):
         self.event(t, 1, type="effect_start", command_id=1)
         self.assertIsNone(t.next_effect_to_send(True, cars_status()))
         self.event(t, 2, type="effect_end", command_id=1)
-        self.clock.now += 3
+        self.elapse_trap_rest(t)
         self.assertEqual(t.next_effect_to_send(True, cars_status()), (PROPHET_CAR_TRAP, "cars"))
 
     def test_car_journal_restores_before_ack_and_consumes_two_sets_once(self) -> None:
@@ -479,7 +495,7 @@ class TrackerTest(unittest.TestCase):
         received = ids(PROPHET_CAR_TRAP, METEOR_TRAP, BLACKOUT_TRAP)
         t.set_received(received)
         t.effect_sent(7, *t.next_effect_to_send(True, cars_status()))
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(received)
         self.assertEqual(again.pending_effect.effect, "cars")
         self.assertFalse(again.pending_effect.started)
@@ -488,7 +504,7 @@ class TrackerTest(unittest.TestCase):
         self.event(again, 1, type="effect_start", effect="cars", command_id=7, car_sets=2, cars_per_set=3)
         self.assertEqual(again.state.effects_done, 1)
         self.assertTrue(again.pending_effect.consumed)
-        during = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        during = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         during.set_received(received)
         self.clock.now += 3600  # includes the gap between the two sets, while the mod still owns cars
         self.assertIsNone(during.next_effect_to_send(True, cars_status(active=True)))
@@ -497,11 +513,11 @@ class TrackerTest(unittest.TestCase):
         self.event(during, 3, type="effect_end", effect="cars", command_id=7)
         self.event(during, 4, type="effect_end", effect="cars", command_id=7)
         self.assertEqual(during.state.effects_done, 1)
-        after = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        after = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         after.set_received(received)
         self.assertIsNone(after.pending_effect)
         self.assertEqual(after.effect_queue(), [METEOR_TRAP, BLACKOUT_TRAP])
-        self.clock.now += 3
+        self.elapse_trap_rest(during)
         self.assertEqual(during.next_effect_to_send(True, cars_status()), (METEOR_TRAP, "meteor"))
 
     def test_unrelated_manual_probe_events_cannot_change_pending_ap_car(self) -> None:
@@ -526,7 +542,7 @@ class TrackerTest(unittest.TestCase):
                 self.assertEqual(t.next_effect_at, 0)
                 self.assertEqual(t.effect_queue(), [PROPHET_CAR_TRAP, METEOR_TRAP])
                 self.assertIsNone(t.next_effect_to_send(True, cars_status()))
-                journal = json.loads(t.state_path.read_text())["pending_meteor"]
+                journal = json.loads(t.state_path.read_text())["pending_effect"]
                 self.assertEqual(journal["command_id"], 7)
                 self.assertNotIn("probe", journal)
         self.assertEqual(self.logs, [])  # no retry/skip/failure report for the unrelated probe
@@ -548,7 +564,7 @@ class TrackerTest(unittest.TestCase):
         self.assertIsNone(t.next_effect_to_send(True, fresh))
         self.assertIsNone(t.pending_effect)
         self.assertEqual(t.state.effects_done, 1)
-        self.clock.now += 3
+        self.elapse_trap_rest(t)
         self.assertEqual(t.next_effect_to_send(True, fresh), (BLACKOUT_TRAP, "blackout"))
 
     def test_car_start_retries_persist_and_third_failure_skips_once(self) -> None:
@@ -558,7 +574,7 @@ class TrackerTest(unittest.TestCase):
         for attempt, reason in enumerate(("spawn_blocked", "asset_unavailable", "spawn_failed"), 1):
             t.effect_sent(attempt, *t.next_effect_to_send(True, cars_status()))
             self.event(t, attempt, type="effect_failed", command_id=attempt, reason=reason)
-            t = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+            t = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
             t.set_received(received)
             if attempt < 3:
                 self.assertIsNone(t.next_effect_to_send(True, cars_status()))
@@ -588,7 +604,7 @@ class TrackerTest(unittest.TestCase):
                 self.event(t, 2, type="effect_start", command_id=2)
                 self.event(t, 3, type="effect_end", command_id=2)
                 self.assertEqual(t.state.meteor_start_failures, 0)
-                self.clock.now += 3
+                self.elapse_trap_rest(t)
                 t.effect_sent(3, *t.next_effect_to_send(True, cars_status()))
                 self.event(t, 4, type="effect_failed", command_id=3, reason="spawn_failed")
                 self.assertEqual(t.state.meteor_start_failures, 1)
@@ -625,7 +641,7 @@ class TrackerTest(unittest.TestCase):
         fixture = Path(__file__).with_name("fixtures") / "meteor-0.2.0.json"
         saved = json.loads(fixture.read_text())
         t.state_path.write_text(json.dumps(saved))
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         again.set_received(ids(METEOR_TRAP, PROPHET_CAR_TRAP))
         self.assertEqual(again.state.kills, 30)
         self.assertEqual(again.state.best_wave, 7)
@@ -639,7 +655,7 @@ class TrackerTest(unittest.TestCase):
         # An old failed-start save has no pending command, but must keep its retry count/deadline.
         saved.update(effects_done=0, pending_meteor=None, meteor_start_failures=2, meteor_retry_at=1003.0)
         t.state_path.write_text(json.dumps(saved))
-        retry = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        retry = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         retry.set_received(ids(METEOR_TRAP))
         self.assertIsNone(retry.next_effect_to_send(True, meteor_status()))
         self.clock.now += 3
@@ -652,5 +668,287 @@ class TrackerTest(unittest.TestCase):
         t = self.make()
         t.state_path.write_text(json.dumps({"pending_meteor": {
             "command_id": 1, "effect": "blackout", "item_name": BLACKOUT_TRAP, "sent_at": 1000.0}}))
-        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append)
+        again = Tracker(t.settings, t.state_path, clock=self.clock, log=self.logs.append, rest_rng=t.rest_rng)
         self.assertIsNone(again.pending_effect)
+
+    def test_completed_traps_roll_one_bounded_rest_without_using_deathlink_rng(self) -> None:
+        for item in (BLACKOUT_TRAP, METEOR_TRAP, PROPHET_CAR_TRAP):
+            for rest in (20, 30):
+                with self.subTest(item=item, rest=rest):
+                    t = self.make(rolls=[24])
+                    t.rest_rng.randint.return_value = rest
+                    t.set_received(ids(item, BLACKOUT_TRAP))
+                    t.effect_sent(7, *t.next_effect_to_send(True, active_status(10)))
+                    self.event(t, 1, type="effect_start", command_id=7)
+                    t.rest_rng.randint.assert_not_called()
+                    self.event(t, 2, type="effect_end", command_id=7, active_play_seconds=20)
+                    self.assertEqual(t.state.trap_rest_remaining, rest)
+                    self.event(t, 3, type="effect_end", command_id=7, active_play_seconds=20)
+                    t.rest_rng.randint.assert_called_once_with(20, 30)
+                    self.assertTrue(self.event(t, 4, type="death")["send_death"])
+
+    def test_end_without_start_ack_still_consumes_and_starts_rest_once(self) -> None:
+        t = self.make()
+        t.set_received(ids(SLOW_MO_TRAP, BLACKOUT_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(10)))
+        self.event(t, 1, type="effect_end", command_id=1, active_play_seconds=20)
+        self.assertEqual(t.state.effects_done, 1)
+        self.assertEqual(t.state.trap_rest_remaining, 25)
+        t.rest_rng.randint.assert_called_once_with(20, 30)
+
+    def test_trap_rest_uses_active_seconds_and_dispatch_requires_active_play(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, METEOR_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(10)))
+        self.event(t, 1, type="effect_start", command_id=1)
+        self.event(t, 2, type="effect_end", command_id=1, active_play_seconds=20)
+        for in_run in (False, True):
+            self.clock.now += 3600
+            self.assertIsNone(t.next_effect_to_send(in_run, active_status(20, active_play=False)))
+            self.assertEqual(t.state.trap_rest_remaining, 25)
+        self.assertIsNone(t.next_effect_to_send(True, active_status(44.75)))
+        self.assertAlmostEqual(t.state.trap_rest_remaining, 0.25)
+        self.assertIsNone(t.next_effect_to_send(True, active_status(45, active_play=False)))
+        self.assertEqual(t.state.trap_rest_remaining, 0)
+        self.assertEqual(t.next_effect_to_send(True, active_status(45)), (METEOR_TRAP, "meteor"))
+
+    def test_rest_rebases_after_restart_or_new_game_and_ignores_backward_samples(self) -> None:
+        t = self.make()
+        t.state.trap_rest_remaining = 25
+        t.save()
+        again = Tracker(t.settings, t.state_path, rest_rng=t.rest_rng, clock=self.clock, log=self.logs.append)
+        again.set_received(ids(BLACKOUT_TRAP))
+        self.clock.now += 86400
+        self.assertIsNone(again.next_effect_to_send(True, active_status(1000)))
+        self.assertEqual(again.state.trap_rest_remaining, 25)  # no offline credit
+        again.next_effect_to_send(True, active_status(1005))
+        self.assertEqual(again.state.trap_rest_remaining, 20)
+        again.next_effect_to_send(True, active_status(400, session="g2"))
+        again.next_effect_to_send(True, active_status(390, session="g2"))
+        self.assertEqual(again.state.trap_rest_remaining, 20)
+        again.next_effect_to_send(True, active_status(405, session="g2"))
+        self.assertEqual(again.state.trap_rest_remaining, 15)
+
+    def test_end_clock_prevents_stale_heartbeat_from_spending_pre_end_time(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, METEOR_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(10)))
+        self.event(t, 1, type="effect_start", command_id=1)
+        self.event(t, 2, type="effect_end", command_id=1, active_play_seconds=20)
+        self.clock.now += 3
+        t.next_effect_to_send(True, active_status(15))
+        self.assertEqual(t.state.trap_rest_remaining, 25)
+        t.next_effect_to_send(True, active_status(21))
+        self.assertEqual(t.state.trap_rest_remaining, 24)
+
+    def test_fever_at_fifo_head_runs_during_rest_without_resetting_it(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, DISCO_FEVER, METEOR_TRAP, DISCO_FEVER))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(10)))
+        self.event(t, 1, type="effect_start", command_id=1)
+        self.event(t, 2, type="effect_end", command_id=1, active_play_seconds=20)
+        self.clock.now += 3
+        self.assertEqual(t.next_effect_to_send(True, active_status(20)), (DISCO_FEVER, "fever"))
+        t.effect_sent(2, DISCO_FEVER, "fever")
+        self.event(t, 3, type="effect_start", command_id=2)
+        self.event(t, 4, type="effect_end", command_id=2, active_play_seconds=20)
+        self.clock.now += 3
+        self.assertEqual(t.state.trap_rest_remaining, 25)
+        t.rest_rng.randint.assert_called_once_with(20, 30)
+        self.assertIsNone(t.next_effect_to_send(True, active_status(20)))
+        self.assertEqual(t.effect_queue(), [METEOR_TRAP, DISCO_FEVER])  # never jump the trap
+
+    def test_clockless_mod_can_start_first_trap_but_holds_rest_with_one_notice(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, SLOW_MO_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, {"in_run": True}))
+        self.event(t, 1, type="effect_start", command_id=1)
+        self.event(t, 2, type="effect_end", command_id=1)
+        before = len(self.logs)
+        for _ in range(4):
+            self.clock.now += 3600
+            self.assertIsNone(t.next_effect_to_send(True, {"in_run": True}))
+        self.assertEqual(len(self.logs), before + 1)
+        self.assertEqual(t.state.trap_rest_remaining, 25)
+        self.assertEqual(t.effect_queue(), [SLOW_MO_TRAP])
+
+    def test_invalid_clock_samples_never_reduce_saved_rest(self) -> None:
+        t = self.make()
+        t.state.trap_rest_remaining = 25
+        t.set_received(ids(BLACKOUT_TRAP))
+        t.next_effect_to_send(True, active_status(10))
+        bad = [{"active_play_seconds": value} for value in (-1, float("nan"), float("inf"), "100", True)]
+        bad += [{"clock_version": 2}, {"session": None}, {"session": 2}]
+        for changes in bad:
+            with self.subTest(changes=changes):
+                self.assertIsNone(t.next_effect_to_send(True, active_status(100, **changes)))
+                self.assertEqual(t.state.trap_rest_remaining, 25)
+        t.next_effect_to_send(True, active_status(11))
+        self.assertEqual(t.state.trap_rest_remaining, 24)
+
+    def test_fractional_rest_updates_save_at_seconds_and_zero_not_every_poll(self) -> None:
+        t = self.make()
+        t.state.trap_rest_remaining = 25
+        t.set_received(ids(BLACKOUT_TRAP))
+        t.next_effect_to_send(True, active_status(100))
+        with patch.object(t, "save", wraps=t.save) as save:
+            t.next_effect_to_send(True, active_status(100.1))
+            first = save.call_count
+            for seconds in (100.2, 100.3, 100.4):
+                t.next_effect_to_send(True, active_status(seconds))
+            self.assertEqual(save.call_count, first)
+            t.next_effect_to_send(True, active_status(101.1))
+            self.assertGreater(save.call_count, first)
+            t.next_effect_to_send(True, active_status(125))
+            self.assertEqual(json.loads(t.state_path.read_text())["trap_rest_remaining"], 0)
+
+    def test_regular_effect_journal_survives_send_and_start_without_early_consumption(self) -> None:
+        t = self.make()
+        received = ids(BLACKOUT_TRAP, DISCO_FEVER)
+        t.set_received(received)
+        t.effect_sent(7, *t.next_effect_to_send(True, active_status()), command_session="client-a")
+        for started in (False, True):
+            if started:
+                self.event(t, 1, type="effect_start", command_id=7, command_session="client-a")
+            again = Tracker(t.settings, t.state_path, rest_rng=t.rest_rng, clock=self.clock, log=self.logs.append)
+            again.set_received(received)
+            self.assertEqual(again.pending_effect.command_id, 7)
+            self.assertEqual(again.pending_effect.command_session, "client-a")
+            self.assertEqual(again.pending_effect.started, started)
+            self.assertEqual(again.state.effects_done, 0)
+            self.assertEqual(json.loads(t.state_path.read_text())["pending_effect"]["started"], started)
+        self.event(again, 2, type="effect_end", command_id=7, command_session="client-a", active_play_seconds=10)
+        self.assertEqual(again.state.effects_done, 1)
+        self.assertEqual(again.state.trap_rest_remaining, 25)
+
+    def test_command_session_disambiguates_reused_ids_and_survives_restart(self) -> None:
+        t = self.make()
+        t.set_received(ids(PROPHET_CAR_TRAP))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status()), command_session="new-client")
+        again = Tracker(t.settings, t.state_path, rest_rng=t.rest_rng, clock=self.clock, log=self.logs.append)
+        for seq, kind in enumerate(("effect_start", "effect_end", "effect_failed"), 1):
+            self.event(again, seq, type=kind, command_id=1, command_session="old-client", reason="spawn_failed")
+            self.assertIsNotNone(again.pending_effect)
+            self.assertFalse(again.pending_effect.started)
+            self.assertEqual(again.state.effects_done, 0)
+            again.rest_rng.randint.assert_not_called()
+        self.event(again, 4, type="effect_start", command_id=1, command_session="new-client")
+        self.assertEqual(again.state.effects_done, 1)
+
+    def test_every_pending_effect_holds_without_heartbeat_and_active_status_suspends_watchdog(self) -> None:
+        for started in (False, True):
+            t = self.make()
+            t.set_received(ids(BLACKOUT_TRAP, DISCO_FEVER))
+            t.effect_sent(1, *t.next_effect_to_send(True, active_status()))
+            if started:
+                self.event(t, 1, type="effect_start", command_id=1)
+            self.clock.now += 3600
+            for status in (None, {}, active_status(effect="blackout"), active_status(effect="fever")):
+                self.assertIsNone(t.next_effect_to_send(True, status))
+                self.assertIsNotNone(t.pending_effect)
+                self.assertEqual(t.state.effects_done, 0)
+                t.rest_rng.randint.assert_not_called()
+
+    def test_failed_start_retries_and_final_skip_do_not_create_rest(self) -> None:
+        t = self.make()
+        t.set_received(ids(METEOR_TRAP, BLACKOUT_TRAP))
+        for attempt in range(1, 4):
+            t.effect_sent(attempt, *t.next_effect_to_send(True, active_status()))
+            self.event(t, attempt, type="effect_failed", command_id=attempt, reason="spawn_failed")
+            self.clock.now += 3
+            self.assertEqual(t.state.trap_rest_remaining, 0)
+            t.rest_rng.randint.assert_not_called()
+        self.assertEqual(t.next_effect_to_send(True, active_status()), (BLACKOUT_TRAP, "blackout"))
+
+    def test_started_failures_roll_rest_for_regular_and_native_traps(self) -> None:
+        for item in (BLACKOUT_TRAP, METEOR_TRAP, PROPHET_CAR_TRAP):
+            with self.subTest(item=item):
+                t = self.make()
+                t.set_received(ids(item, BLACKOUT_TRAP))
+                t.effect_sent(1, *t.next_effect_to_send(True, active_status(10)))
+                self.event(t, 1, type="effect_start", command_id=1)
+                self.event(t, 2, type="effect_failed", command_id=1, reason="downtime", active_play_seconds=20)
+                self.assertIsNone(t.pending_effect)
+                self.assertEqual(t.state.effects_done, 1)
+                self.assertEqual(t.state.trap_rest_remaining, 25)
+                t.rest_rng.randint.assert_called_once_with(20, 30)
+
+    def test_general_journal_takes_precedence_over_legacy_native_mirror(self) -> None:
+        t = self.make()
+        t.state_path.write_text(json.dumps({
+            "pending_effect": {"command_id": 7, "effect": "blackout", "item_name": BLACKOUT_TRAP,
+                               "sent_at": 1000.0, "started": True, "command_session": "current"},
+            "pending_meteor": {"command_id": 3, "effect": "meteor", "item_name": METEOR_TRAP,
+                               "sent_at": 900.0, "started": True, "consumed": True},
+        }))
+        again = Tracker(t.settings, t.state_path, rest_rng=t.rest_rng, clock=self.clock, log=self.logs.append)
+        self.assertEqual(again.pending_effect.command_id, 7)
+        self.assertEqual(again.pending_effect.effect, "blackout")
+        self.assertEqual(again.pending_effect.command_session, "current")
+
+    def test_clock_aware_mod_requires_explicit_active_play_even_before_first_trap(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP))
+        for active in (False, None, "true", 1):
+            with self.subTest(active=active):
+                self.assertIsNone(t.next_effect_to_send(True, active_status(0, active_play=active)))
+        missing = active_status(0)
+        del missing["active_play"]
+        self.assertIsNone(t.next_effect_to_send(True, missing))
+        self.assertEqual(t.next_effect_to_send(True, active_status(0)), (BLACKOUT_TRAP, "blackout"))
+
+    def test_replayed_completion_after_restart_cannot_spend_offline_time(self) -> None:
+        t = self.make()
+        received = ids(BLACKOUT_TRAP, METEOR_TRAP)
+        t.set_received(received)
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(10)))
+        self.event(t, 1, type="effect_start", command_id=1)
+        again = Tracker(t.settings, t.state_path, rest_rng=t.rest_rng, clock=self.clock, log=self.logs.append)
+        again.set_received(received)
+        self.clock.now += 3600
+        again.observe_status(active_status(200))
+        self.event(again, 2, type="effect_end", command_id=1, active_play_seconds=100)
+        self.assertIsNone(again.next_effect_to_send(True, active_status(200)))
+        self.assertEqual(again.state.trap_rest_remaining, 25)
+        again.next_effect_to_send(True, active_status(201))
+        self.assertEqual(again.state.trap_rest_remaining, 24)
+        again.rest_rng.randint.assert_called_once_with(20, 30)
+
+    def test_live_completion_keeps_exact_stamp_after_initial_clock_floor(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, METEOR_TRAP))
+        t.observe_status(active_status(50))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(50)))
+        self.event(t, 1, type="effect_start", command_id=1)
+        t.observe_status(active_status(200))  # the heartbeat was read before this poll's events
+        self.event(t, 2, type="effect_end", command_id=1, active_play_seconds=190)
+        t.next_effect_to_send(True, active_status(200))
+        self.assertEqual(t.state.trap_rest_remaining, 15)  # precisely ten seconds after completion
+        t.next_effect_to_send(True, active_status(201))
+        self.assertEqual(t.state.trap_rest_remaining, 14)
+
+    def test_new_game_clock_floor_does_not_inherit_previous_epoch_counter(self) -> None:
+        t = self.make()
+        t.set_received(ids(BLACKOUT_TRAP, METEOR_TRAP))
+        t.observe_status(active_status(200, session="old-game"))
+        t.observe_status(active_status(0, session="new-game"))
+        t.effect_sent(1, *t.next_effect_to_send(True, active_status(0, session="new-game")))
+        t.handle_event({"type": "effect_start", "command_id": 1, "seq": 1, "game_session": "new-game"})
+        t.handle_event({"type": "effect_end", "command_id": 1, "seq": 2, "game_session": "new-game",
+                        "active_play_seconds": 10})
+        t.next_effect_to_send(True, active_status(11, session="new-game"))
+        self.assertEqual(t.state.trap_rest_remaining, 24)
+
+    def test_exact_floor_and_other_epoch_completion_stamps_remain_unchanged(self) -> None:
+        for floor_session, end_session, end_seconds in (("g1", "g1", 200), ("new-game", "old-game", 100)):
+            with self.subTest(floor=floor_session, completion=end_session):
+                t = self.make()
+                t.set_received(ids(BLACKOUT_TRAP, METEOR_TRAP))
+                t.effect_sent(1, BLACKOUT_TRAP, "blackout")
+                t.observe_status(active_status(200, session=floor_session))
+                t.handle_event({"type": "effect_end", "command_id": 1, "seq": 1,
+                                "game_session": end_session, "active_play_seconds": end_seconds})
+                self.assertEqual(t.state.trap_rest_remaining, 25)
+                # A late sample from that epoch must use its own counter, never another game's floor.
+                t.next_effect_to_send(True, active_status(end_seconds + 1, session=end_session))
+                self.assertEqual(t.state.trap_rest_remaining, 24)

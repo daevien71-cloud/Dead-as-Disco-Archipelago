@@ -13,6 +13,9 @@ who play other games.
   cleanup are now confirmed in live Arcade.
 - **DeathLink:** your deaths have a 25% chance to be sent; their deaths have a 40% chance to kill you
   while you're in a run (both adjustable).
+- **Trap pacing (v0.3.2):** after a queued trap finishes, the next trap waits a random **20–30 seconds
+  of active Arcade play**. Pauses, menus and between-wave downtime do not use up that rest. The
+  remaining rest is saved across reconnects, so a backlog arrives gradually.
 
 ## Install and play
 
@@ -24,6 +27,11 @@ See [the setup guide](apworld/dead_as_disco/docs/setup_en.md). Short version: ru
 Every option, in plain words: [Options explained](apworld/dead_as_disco/docs/en_Dead%20as%20Disco.md#options-explained).
 
 To update later: `Update.bat` (Windows) or `bash Update-Linux.sh` (Linux), with the game closed.
+
+Trap pacing needs both the v0.3.2 game mod and APWorld; it works with existing multiworlds, without
+regenerating a seed. A whole meteor batch or both car sets count as one trap, and the rest starts
+after that whole trap ends. `/disco` shows the rest remaining. Manual `/testeffect` commands bypass
+the received-item queue for testing and do not test its pacing.
 
 Meteor Trap is **off by default** while its warning, damage and remnant interaction are playtested.
 Update both the game mod and APWorld before enabling it. It waits for active Arcade combat and a grounded

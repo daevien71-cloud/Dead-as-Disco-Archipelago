@@ -4,6 +4,7 @@ Start it from the Archipelago Launcher ("Dead as Disco Client"), connect, then p
 """
 
 import asyncio
+import math
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -43,6 +44,8 @@ class DeadAsDiscoCommandProcessor(ClientCommandProcessor):
                     f"Mirror Ball Shields: {t.shields_available}")
         queue = t.effect_queue()
         self.output(f"Queued effects: {', '.join(queue) if queue else 'none'}")
+        if t.state.trap_rest_remaining > 0:
+            self.output(f"Trap rest: {math.ceil(t.state.trap_rest_remaining)} seconds of active Arcade play remaining.")
         if s.death_link:
             self.output(f"DeathLink: send {s.death_link_send_chance}%, receive {s.death_link_receive_chance}%")
         return True
@@ -64,7 +67,7 @@ class DeadAsDiscoCommandProcessor(ClientCommandProcessor):
         elif key == "cars":
             self.output("Sent an experimental single-car probe." if probe else
                         "Sent an experimental car trap: two sets of three; the second waits until the first is gone.")
-            self.output("Native player and enemy damage still need live Arcade verification.")
+            self.output("Cars damage players and enemies; the two sets cross in an X.")
         else:
             self.output(f"Sent test effect '{effect}' (only applies during a run).")
         return True
@@ -213,6 +216,7 @@ async def game_tick(ctx: DeadAsDiscoContext) -> None:
     tracker = ctx.tracker
     if not tracker or not ctx.slot:
         return  # leave events unread until we know which slot they belong to
+    tracker.observe_status(status)
     for event in ctx.bridge.read_events():
         await ctx.apply(tracker.handle_event(event))
     in_run = bool(status and status.get("in_run"))
@@ -224,9 +228,13 @@ async def game_tick(ctx: DeadAsDiscoContext) -> None:
     effect = tracker.next_effect_to_send(in_run, status)
     if effect:
         item_name, key = effect
-        command_id = ctx.bridge.send({"type": "effect", "effect": key, "item": item_name,
-                                      "duration": tracker.settings.effect_duration})
-        tracker.effect_sent(command_id, item_name, key)
+        ctx.bridge.send({"type": "effect", "effect": key, "item": item_name,
+                         "duration": tracker.settings.effect_duration},
+                        before_send=lambda command: tracker.effect_sent(
+                            command["id"], item_name, key,
+                            # Older mods do not echo command sessions. Keep their legacy first
+                            # effect working; once it ends, the rest gate requests an update.
+                            command_session=command["session"] if status.get("clock_version") == 1 else None))
 
 
 def launch(*launch_args: str) -> None:

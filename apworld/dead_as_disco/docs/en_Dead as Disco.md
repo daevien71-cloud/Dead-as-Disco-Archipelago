@@ -24,10 +24,19 @@ against DeathLink.
   and APWorld before enabling it.
 - **Prophet Car Trap (experimental, off by default)**: two sets of three native Prophet cars form an X,
   one diagonal at a time. The second waits until the first cars and warnings are gone. Update the game mod
-  and APWorld to v0.3.1 together.
+  and APWorld together (v0.3.1 or newer; v0.3.2 adds queue pacing).
 - **Groovy Vibes**: nothing, just vibes.
 
-Traps and buffs wait until you're in an Arcade run, then fire one at a time.
+Traps and buffs wait until you're in an Arcade run, then fire one at a time in received order.
+After each queued trap finishes, the next trap waits a fresh random **20–30 seconds of active Arcade
+play**. Pauses, menus, death and between-wave downtime do not count. A meteor batch or both car sets
+count as one trap; the rest starts after the entire trap ends. The chosen rest survives client and game
+restarts without being rerolled or spent while the client is away. `/disco` shows how much remains.
+A Disco Fever already ahead of the next trap can run during this rest; it does not restart the timer.
+Gold Records and shields are available as soon as received. This pacing needs the v0.3.2 mod and APWorld,
+and works in existing multiworlds without regenerating. With an older mod, waiting traps stay queued
+and the client asks you to update. Manual `/testeffect` commands bypass this queue and do not change its rest.
+
 Meteors also wait for active combat and for you to be on the ground. Each trap chooses its count once and
 uses **one item for the entire batch**. The next meteor waits until the previous meteor and remnant are gone,
 with at least 3 seconds of game time between launches. Each target locks when that meteor launches; moving

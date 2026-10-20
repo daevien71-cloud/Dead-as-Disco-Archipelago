@@ -3,6 +3,61 @@
 Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
 [AGENTS.md](AGENTS.md).
 
+## Queued trap pacing, v0.3.2 candidate (2026-10-19)
+
+- The owner reported a multiplayer backlog firing traps back-to-back after returning, and requested
+  random 20–30-second intervals after the preceding trap is dealt with. Codex and Claude agreed to
+  count active Arcade play on the game side, keeping the existing FIFO and one-effect slot. No new
+  generator option or seed migration is needed. Rest is per complete trap, not per meteor or car set.
+- `main.lua` samples Unreal's `GetAudioTimeSeconds` through the existing GameplayStatics CDO. Local
+  UE5.7 source confirms that this clock stops when paused and advances before time dilation. Sampling
+  requires a live Arcade run, current controlled pawn in the same world, no wave-clear downtime, and
+  explicit unpaused state. Invalid/backward reads and scene/run boundaries rebase without time credit.
+  Status exposes versioned cumulative active seconds and readiness; completion events stamp the clock
+  after cleanup. Only the existing 250ms tick and heartbeat are used; no additional loop or actor scan.
+- The tracker uses a separate random generator to avoid changing DeathLink rolls, saves the selected
+  remaining rest, and persists whole-second progress. Pauses and downtime freeze it. A new client/game
+  epoch rebases the clock without offline catch-up. A first-heartbeat floor also protects an old end
+  event replayed after a pending trap completed while the client was away. Older heartbeat samples
+  cannot move a completion anchor backwards. Buffs ahead of a trap may run during rest; FIFO is kept.
+- All pending effects now have a write-before-send journal, with originating command session and ID.
+  Ordinary effects still consume on end, native traps on first start. Active heartbeats and missing
+  heartbeats protect pending commands from premature watchdog completion. The old native-only journal
+  is preserved for existing saves. Modern events require the matching session; older mods use legacy
+  matching, then hold the next queued trap with one update notice because they lack the rest clock.
+- Claude's final review caught the same old-mod acknowledgement issue Codex found independently:
+  v0.3.1 does not echo command sessions. Dispatch now negotiates legacy matching from clock support,
+  keeping strict matching for modern mods. Existing simultaneous mod/client crash recovery is not a
+  universal exactly-once guarantee; this change does not introduce a new command replay protocol.
+- Manual `/testeffect` commands remain immediate probes, spend no item and cannot clear a queued
+  trap's rest. Live pacing must use real AP items, as documented in the setup guide. Native hazard
+  behavior and existing traps' duration semantics are unchanged. Linux pacing validation remains pending.
+- Final automated validation: 109 Python unit tests (36 world, 63 tracker, 10 bridge), 217 main Lua
+  checks, unchanged 267 meteor/320 car checks, 13 real-server/fake-game E2E checks, 10 updater tests
+  and six Linux installer tests passed. E2E includes one real-time rest, paused and offline client
+  restart checks, both 24-second native holds, and a pending car finishing offline before reconnect.
+  A test-only over-broad fake-clock jump was corrected to cross the saved remainder narrowly.
+  Package CRCs and every archived source byte match; v0.3.2 was installed on Windows with exact hash
+  checks and a backup under ignored `playtest/pacing-install-before-20261019-210455`.
+- Real AP song-transition proof passed. Two five-second Slow-Mo items came from a fresh local AP seed
+  with DeathLink off and only Gold Records in its pool. The first trap started, then the owner reported
+  the song ended; its end reason was `run_ended`. The client rolled 20 seconds and kept that rest through
+  115.428 seconds of inactive fresh heartbeats, with exactly zero active-clock change. After a new Arcade
+  run, the second trap started 21.095 active seconds after the first ended and expired normally. This
+  includes normal heartbeat/tick delivery latency. Same command session, distinct IDs 1 and 2.
+- The live runner initially required `expired` for both ends and stopped before reading the final client
+  acknowledgement. A narrowly scoped reconnect to the same test seed replayed that receipt through the
+  real client: `effects_done=2`, both journals null, no new effect command. Original failure evidence is
+  preserved alongside `transition-audit.json` and `reconciled-state.json` in ignored
+  `playtest/live-pacing-20261020-021023-UTC-5c3d46`. This verifies the song-transition/rest/reconnect path;
+  a dedicated mid-rest pause and native-batch gap remain separate live checks.
+- The preceding live attempt was delayed by the test recorder opening the Windows progress JSON without
+  delete sharing, briefly blocking the client's atomic replacement at dispatch. The client withheld the
+  command and recovered without loss or duplication, but the gap exceeded the chosen rest. Fixed only
+  the ignored recorder to use `CreateFileW` with read/write/delete sharing and close before JSON parsing.
+  No production code changed after review and automated validation. First-attempt evidence remains at
+  `playtest/live-pacing-20261020-020814-UTC-777c93`. Both tests' local server/client processes exited.
+
 ## Public v0.3.1 release (2026-10-19)
 
 - At the owner's request, published [v0.3.1](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.1)

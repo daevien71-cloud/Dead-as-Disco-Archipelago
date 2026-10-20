@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 HEARTBEAT_TIMEOUT = 5.0
 STEAM_APP_ID = "3404260"
@@ -82,9 +82,11 @@ class GameBridge:
         self.commands_path.write_text(json.dumps({"type": "hello", "session": self.session}) + "\n",
                                       encoding="utf-8")
 
-    def send(self, command: dict[str, Any]) -> int:
+    def send(self, command: dict[str, Any], before_send: Optional[Callable[[dict[str, Any]], None]] = None) -> int:
         command = dict(command, session=self.session, id=self._next_id)
         self._next_id += 1
+        if before_send:
+            before_send(command)
         with self.commands_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(command, separators=(",", ":")) + "\n")
             stream.flush()

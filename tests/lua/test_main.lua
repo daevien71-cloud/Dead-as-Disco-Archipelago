@@ -19,6 +19,7 @@ local output = {}
 print = function(text) output[#output + 1] = text end
 
 local next_address = 1000
+local engine_world
 local function object(name, props)
     next_address = next_address + 1
     local o = props or {}
@@ -27,8 +28,10 @@ local function object(name, props)
     function o:GetFullName() return self._name end
     function o:GetAddress() return self._address end
     function o:GetPropertyValue(key) return self[key] end
+    function o:GetWorld() return self._world or engine_world end
     return o
 end
+engine_world = object("UWorld /Game/Level")
 local function param(value) return {get = function() return value end} end
 
 local world = {}
@@ -100,11 +103,19 @@ function StaticConstructObject(class, outer, name)
     return o
 end
 
-local statics = object("Default__GameplayStatics", {dilation = 1.0})
+local statics = object("Default__GameplayStatics", {dilation = 1.0, audio_seconds = 0, paused = false})
 function statics:SetGlobalTimeDilation(_, speed) self.dilation = speed end
 function statics:GetGlobalTimeDilation() return self.dilation end
 function statics:GetPlayerPawn() return self.controlled_pawn end
 function statics:GetPlayerController() return self.local_controller end
+function statics:GetAudioTimeSeconds()
+    if self.audio_failure then error("audio clock unavailable") end
+    return self.audio_override ~= nil and self.audio_override or self.audio_seconds
+end
+function statics:IsGamePaused()
+    if self.pause_failure then error("pause query unavailable") end
+    return self.paused
+end
 functions["/Script/Engine.Default__GameplayStatics"] = statics
 local library = object("Default__PagodaCombatFunctionLibrary", {calls = {}})
 function library:ApplySetByCallerEffect(target, effect, tag, value)
@@ -189,7 +200,10 @@ function fake_cars:start(p, state, on_set, probe)
     if on_set then on_set(1, count) end
     return true, count
 end
-function fake_cars:stop() self.active = nil; self.stops = self.stops + 1 end
+function fake_cars:stop()
+    self.active = nil; self.stops = self.stops + 1
+    statics.audio_seconds = statics.audio_seconds + (self.stop_advance or 0)
+end
 function fake_cars:tick()
     if self.tick_throws then error("native cars tick unavailable") end
     local done = self.done; self.done = nil; return done
@@ -205,7 +219,7 @@ check(hooks[PLAYER .. ":OnDeathStartedDelegate_Event"] ~= nil, "death hook regis
 check(keybinds.HOME ~= nil and keybinds.F5 == nil and keybinds.F10 == nil, "only the status hotkey is on by default")
 
 -- Start an Arcade run.
-local state = object("BP_PagodaGameState_InfiniteDisco_C /Game/Level.PersistentLevel.GS_1", {round = 0})
+local state = object("BP_PagodaGameState_InfiniteDisco_C /Game/Level.PersistentLevel.GS_1", {round = 0, bWaveClearedRequested = false})
 local charlie = object("BP_PagodaPlayerCharacter_Charlie_C /Game/Level.PersistentLevel.Charlie_1", {CustomTimeDilation = 1.0,
     HealthAttributeSet = {Health = {BaseValue = 100, CurrentValue = 100}}})
 function charlie:GetHealth() return self.HealthAttributeSet.Health.CurrentValue end
@@ -338,12 +352,16 @@ file:write(json.encode({type = "effect", effect = "molasses", duration = 5, sess
 file:close()
 tick(1)
 check(charlie.CustomTimeDilation == 0.6, "commands after a client restart are read")
+check(events_of("effect_start")[#events_of("effect_start")].command_session == "client2",
+    "new client session is echoed on an ordinary effect start")
 
 -- Level-end arrives before the UObject disappears. Polling its old round must not restart a run.
 hooks[GS .. ":HandleLevelEnded"](param(state))
 tick(8)
 check(not read_status().in_run, "old state cannot restart a run after HandleLevelEnded")
 check(charlie.CustomTimeDilation == 1.0, "level-end immediately reverts the active effect")
+check(events_of("effect_end")[#events_of("effect_end")].command_session == "client2",
+    "ordinary effect end retains its originating client session")
 hooks[GS .. ":ReinitDiscoState"](param(state))
 state.round = 1
 hooks[GS .. ":AdvanceRound"](param(state))
@@ -467,8 +485,8 @@ hooks[GS .. ":ReinitDiscoState"](param(state))
 state.round = 1
 hooks[GS .. ":AdvanceRound"](param(state))
 tick(4)
-check(read_status().version == "0.3.1" and read_status().effects[7] == "cars" and read_status().cars_ready,
-    "cars capability and readiness advertised in version 0.3.1")
+check(read_status().version == "0.3.2" and read_status().effects[7] == "cars" and read_status().cars_ready,
+    "cars capability and readiness advertised in version 0.3.2")
 for _, reason in ipairs({"paused", "airborne"}) do
     fake_cars.ready_reason = reason
     command({type = "effect", effect = "cars"})
@@ -578,6 +596,179 @@ check(not read_status().effect and not fake_cars.active
     "unexpected cars runtime exception ends and cleans the effect instead of leaving it busy")
 fake_cars.tick_throws = nil
 
+-- Queue pacing uses a cumulative game-session clock, not wall time or dilated time.
+-- Keep native time fixed across polling ticks so these assertions do not depend on
+-- where the once-per-second status heartbeat falls within the test harness.
+local function clock_status(delta)
+    if not statics.paused then statics.audio_seconds = statics.audio_seconds + (delta or 0) end
+    tick(4)
+    return read_status()
+end
+local function close(a, b) return math.abs(a-b) < 1e-8 end
+local function raw_effect(effect, id, origin, probe)
+    local file = assert(io.open(bridge .. "commands.jsonl", "ab"))
+    file:write(json.encode({type="effect", effect=effect, duration=30, id=id, session=origin, probe=probe}) .. "\n")
+    file:close()
+end
+for _, event in ipairs(events_of("effect_failed")) do
+    check(event.command_session == "testclient", "every refusal echoes its originating command session")
+end
+local clock = clock_status()
+check(clock.clock_version == 1 and clock.active_play == true and type(clock.active_play_seconds) == "number",
+    "status advertises a versioned active-play clock")
+local total = clock.active_play_seconds
+clock = clock_status(5.5)
+check(close(clock.active_play_seconds, total+5.5), "active combat advances by native elapsed time")
+statics.dilation = 0.6
+clock = clock_status(3)
+check(close(clock.active_play_seconds, total+8.5), "slow motion does not stretch the pacing clock")
+statics.dilation = 1.4
+clock = clock_status(4)
+check(close(clock.active_play_seconds, total+12.5), "fast-forward does not shorten the pacing clock")
+statics.dilation = 1
+total = clock.active_play_seconds
+statics.paused = true
+clock = clock_status(100)
+check(clock.active_play == false and close(clock.active_play_seconds,total), "pause contributes no active time")
+statics.paused = false
+clock = clock_status(25)
+check(clock.active_play and close(clock.active_play_seconds,total), "resume rebases an inactive sample without credit")
+clock = clock_status(1)
+check(close(clock.active_play_seconds,total+1), "active time resumes after pause")
+total = clock.active_play_seconds
+state.bWaveClearedRequested = true
+clock = clock_status(40)
+check(not clock.active_play and close(clock.active_play_seconds,total), "wave downtime freezes pacing even while in_run")
+state.bWaveClearedRequested = false
+clock = clock_status(30)
+check(clock.active_play and close(clock.active_play_seconds,total), "combat resumption does not credit the downtime interval")
+clock = clock_status(2)
+check(close(clock.active_play_seconds,total+2), "combat after downtime advances normally")
+total = clock.active_play_seconds
+state.bWaveClearedRequested = nil
+clock = clock_status(10)
+check(not clock.active_play and close(clock.active_play_seconds,total), "unknown combat readiness fails closed")
+state.bWaveClearedRequested = false
+clock_status()
+
+local original_world = engine_world
+engine_world = object("UWorld /Game/NextLevel")
+statics.audio_seconds = 200
+clock = clock_status()
+check(close(clock.active_play_seconds,total), "world replacement rebases without resetting the cumulative total")
+clock = clock_status(3)
+check(close(clock.active_play_seconds,total+3), "new world can contribute active time after its baseline")
+total = clock.active_play_seconds
+local next_state = object("BP_PagodaGameState_InfiniteDisco_C /Game/NextLevel.GS", {round=1,bWaveClearedRequested=false})
+world.BP_PagodaGameState_InfiniteDisco_C = next_state
+hooks[GS .. ":AdvanceRound"](param(next_state))
+clock = clock_status(50)
+check(clock.active_play and close(clock.active_play_seconds,total), "state identity replacement cannot credit the old interval")
+clock = clock_status(2)
+check(close(clock.active_play_seconds,total+2), "replacement state resumes from its own sample")
+total = clock.active_play_seconds
+engine_world = original_world
+world.BP_PagodaGameState_InfiniteDisco_C = state
+state.round = 0
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+hooks[GS .. ":AdvanceRound"](param(state))
+clock_status()
+statics.audio_seconds = 1
+clock = clock_status()
+check(close(clock.active_play_seconds,total), "backward native time rebases without decreasing the cumulative clock")
+clock = clock_status(2)
+check(close(clock.active_play_seconds,total+2), "clock recovers after a backward native sample")
+
+for _, value in ipairs({0/0, math.huge, -math.huge, -1, "not a clock"}) do
+    total = clock.active_play_seconds
+    statics.audio_override = value
+    clock = clock_status(10)
+    check(clock.active_play == false and close(clock.active_play_seconds,total), "invalid native time freezes the finite clock")
+    statics.audio_override = nil
+    clock = clock_status()
+    check(close(clock.active_play_seconds,total), "invalid native time recovery does not credit missed time")
+end
+for _, field in ipairs({"audio_failure", "pause_failure"}) do
+    total = clock.active_play_seconds
+    statics[field] = true
+    clock = clock_status(100)
+    check(not clock.active_play and close(clock.active_play_seconds,total), field .. " stops pacing without stopping the main loop")
+    statics[field] = nil
+    clock = clock_status()
+    check(close(clock.active_play_seconds,total), field .. " recovery rebases")
+end
+total = clock.active_play_seconds
+statics.controlled_pawn = nil
+clock = clock_status(15)
+check(not clock.active_play and close(clock.active_play_seconds,total), "missing controlled pawn freezes the clock")
+statics.controlled_pawn = charlie
+clock_status()
+charlie._world = object("UWorld /Game/StalePawnWorld")
+clock = clock_status(20)
+check(not clock.active_play and close(clock.active_play_seconds,total), "a pawn from another world cannot advance the clock")
+charlie._world = nil
+clock_status()
+
+state.bWaveClearedRequested = true
+hooks[GS .. ":OnIncursionCleared_Event"](param(state))
+state.bWaveClearedRequested = false -- downtime ended between polling samples
+clock = clock_status(100)
+check(close(clock.active_play_seconds,total), "wave-clear hook invalidates an otherwise unobserved downtime interval")
+hooks[GS .. ":HandleLevelEnded"](param(state))
+clock = clock_status(100)
+check(not clock.active_play and close(clock.active_play_seconds,total), "menu/end latch freezes the clock while the old state remains valid")
+state.round = 0
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+hooks[GS .. ":AdvanceRound"](param(state))
+clock = clock_status(100)
+check(clock.active_play and close(clock.active_play_seconds,total), "run restart preserves the total and discards the transition interval")
+local real_time = os.time
+os.time = function() return real_time()+100 end -- avoid the existing death-notification debounce
+hooks[PLAYER .. ":OnDeathStartedDelegate_Event"](param(charlie))
+os.time = real_time
+clock = clock_status(100)
+check(not clock.active_play and close(clock.active_play_seconds,total), "death immediately invalidates pacing")
+state.round = 0
+hooks[GS .. ":ReinitDiscoState"](param(state))
+state.round = 1
+hooks[GS .. ":AdvanceRound"](param(state))
+clock_status()
+
+-- A probe and an AP client may reuse the same id. Acknowledgements preserve origin,
+-- and lifecycle timestamps reflect completion rather than the last status heartbeat.
+raw_effect("cars", 1, "probe-origin", true)
+clock = clock_status()
+local probe_start = events_of("effect_start")[#events_of("effect_start")]
+check(probe_start.command_session == "probe-origin" and probe_start.car_count == 1
+    and close(probe_start.active_play_seconds,clock.active_play_seconds), "probe start echoes origin and its active-clock stamp")
+raw_effect("cars", 1, "other-origin", true)
+clock_status()
+local probe_refusal = events_of("effect_failed")[#events_of("effect_failed")]
+check(probe_refusal.reason == "busy" and probe_refusal.command_session == "other-origin",
+    "same-id competing probe refusal keeps the competing session")
+total = clock.active_play_seconds
+fake_cars.done = "native_finished"
+fake_cars.stop_advance = 0.375 -- completion occurs after the main loop's initial clock sample
+clock = clock_status(2.75)
+fake_cars.stop_advance = nil
+local probe_end = events_of("effect_end")[#events_of("effect_end")]
+check(close(clock.active_play_seconds,total+3.125), "active effect and airborne-capable play still advance pacing")
+check(probe_end.command_session == "probe-origin" and probe_end.command_id == 1
+    and close(probe_end.active_play_seconds,total+3.125), "probe end retains original session and samples after actual cleanup")
+raw_effect("slowmo", 9000, nil)
+clock_status()
+local legacy_start = events_of("effect_start")[#events_of("effect_start")]
+check(legacy_start.command_session == nil and type(legacy_start.active_play_seconds) == "number",
+    "legacy command without a session remains supported")
+command({type="effect",effect="fever",duration=30})
+clock_status(0.75)
+check(events_of("effect_end")[#events_of("effect_end")].command_session == nil,
+    "legacy effect end does not borrow the replacing command session")
+hooks[GS .. ":HandleLevelEnded"](param(state))
+clock_status()
+
 -- A missing optional native adapter must leave the other adapter and original traps usable.
 -- Reload only initialization here, discarding the previous scheduled loop.
 local real_require, real_dofile = require, dofile
@@ -616,6 +807,8 @@ for _, missing in ipairs({"meteor", "cars"}) do
             hooks[GS .. ":AdvanceRound"](param(state))
             tick(4)
             local status, advertised = read_status(), false
+            check(status.clock_version == 1 and status.active_play_seconds == 0,
+                label .. " starts a fresh cumulative clock for a new mod session")
             for _, key in ipairs(status.effects) do if key == missing then advertised = true end end
             check(not advertised and #status.effects == 6 and not status[missing .. "_ready"] and status[other .. "_ready"],
                 label .. " removes only its own capability and readiness")

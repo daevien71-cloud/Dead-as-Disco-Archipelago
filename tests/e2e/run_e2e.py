@@ -24,29 +24,59 @@ class FakeGame:
         self.dir = directory
         self.dir.mkdir(parents=True, exist_ok=True)
         self.seq = 0
+        self.session = "fake"
         self.in_run = False
+        self.paused = False
+        self.active_play_seconds = 0.0
+        self.clock_at = time.monotonic()
+        self.lock = threading.RLock()
         self.cleared = 0
         self.commands_seen: list[dict] = []
+        self.events_seen: list[dict] = []
         self.meteor_command: dict | None = None
         self.car_command: dict | None = None
         self.offset = 0
         self.stop = threading.Event()
-        (self.dir / "events.jsonl").write_text(json.dumps({"type": "hello", "session": "fake"}) + "\n")
+        (self.dir / "events.jsonl").write_text(json.dumps({"type": "hello", "session": self.session}) + "\n")
         threading.Thread(target=self.loop, daemon=True).start()
 
+    def clock_fields(self) -> dict:
+        with self.lock:
+            now = time.monotonic()
+            active = self.in_run and not self.paused
+            if active:
+                self.active_play_seconds += now - self.clock_at
+            self.clock_at = now
+            return {"clock_version": 1, "active_play": active, "active_play_seconds": self.active_play_seconds}
+
+    def set_paused(self, paused: bool) -> None:
+        with self.lock:
+            self.clock_fields()  # account for the old pause state before changing it
+            self.paused = paused
+
+    def advance_active_play(self, seconds: float) -> None:
+        """Controlled fake-game time for later rests; never used against a real game bridge."""
+        with self.lock:
+            assert self.in_run and not self.paused and seconds >= 0
+            self.clock_fields()
+            self.active_play_seconds += seconds
+
     def emit(self, **event) -> None:
-        self.seq += 1
-        event.update(seq=self.seq, t=time.time())
-        with (self.dir / "events.jsonl").open("a") as stream:
-            stream.write(json.dumps(event) + "\n")
+        with self.lock:
+            self.seq += 1
+            event.update(seq=self.seq, t=time.time(), **self.clock_fields())
+            self.events_seen.append(dict(event))
+            with (self.dir / "events.jsonl").open("a") as stream:
+                stream.write(json.dumps(event) + "\n")
 
     def loop(self) -> None:
         while not self.stop.is_set():
             (self.dir / "status.json").write_text(json.dumps(
-                {"t": time.time(), "in_run": self.in_run, "round": self.cleared + 1, "cleared": self.cleared,
+                {"t": time.time(), "session": self.session, "in_run": self.in_run,
+                 "round": self.cleared + 1, "cleared": self.cleared, **self.clock_fields(),
                  "effects": ["slowmo", "fastforward", "molasses", "blackout", "fever", "meteor", "cars"],
-                 "meteor_ready": self.in_run and self.meteor_command is None and self.car_command is None,
-                 "cars_ready": self.in_run and self.meteor_command is None and self.car_command is None,
+                 "meteor_ready": self.in_run and not self.paused and self.meteor_command is None and self.car_command is None,
+                 "cars_ready": self.in_run and not self.paused and self.meteor_command is None and self.car_command is None,
                  "effect": "meteor" if self.meteor_command else ("cars" if self.car_command else "")}))
             path = self.dir / "commands.jsonl"
             if path.exists():
@@ -63,13 +93,17 @@ class FakeGame:
         if command["type"] == "effect":
             if command["effect"] == "meteor":
                 self.meteor_command = command
-                self.emit(type="effect_start", effect="meteor", command_id=command["id"], meteor_count=5)
+                self.emit(type="effect_start", effect="meteor", command_id=command["id"],
+                          command_session=command["session"], meteor_count=5)
             elif command["effect"] == "cars":
                 self.car_command = command
-                self.emit(type="effect_start", effect="cars", command_id=command["id"], car_sets=2, cars_per_set=3)
+                self.emit(type="effect_start", effect="cars", command_id=command["id"],
+                          command_session=command["session"], car_sets=2, car_count=6)
             else:
-                self.emit(type="effect_start", effect=command["effect"], command_id=command["id"])
-                self.emit(type="effect_end", effect=command["effect"], command_id=command["id"], reason="expired")
+                self.emit(type="effect_start", effect=command["effect"], command_id=command["id"],
+                          command_session=command["session"])
+                self.emit(type="effect_end", effect=command["effect"], command_id=command["id"],
+                          command_session=command["session"], reason="expired")
         elif command["type"] == "kill":
             self.in_run = False
             self.emit(type="death")
@@ -77,13 +111,14 @@ class FakeGame:
     def finish_meteor(self) -> None:
         command, self.meteor_command = self.meteor_command, None
         assert command is not None
-        self.emit(type="effect_end", effect="meteor", command_id=command["id"], meteor_count=5, reason="native_finished")
+        self.emit(type="effect_end", effect="meteor", command_id=command["id"],
+                  command_session=command["session"], meteor_count=5, reason="native_finished")
 
     def finish_cars(self) -> None:
         command, self.car_command = self.car_command, None
         assert command is not None
-        self.emit(type="effect_end", effect="cars", command_id=command["id"], car_sets=2, cars_per_set=3,
-                  reason="native_finished")
+        self.emit(type="effect_end", effect="cars", command_id=command["id"],
+                  command_session=command["session"], car_sets=2, car_count=6, reason="native_finished")
 
 
 def wait_for(predicate, what: str, timeout: float = 20) -> None:
@@ -181,11 +216,63 @@ Dead as Disco:
         wait_for(lambda: seen("a", "Slow-Mo Trap wore off"), "trap lifecycle logged")
         print("PASS trap waits for a run, then fires and ends")
 
-        wait_for(lambda: any(c.get("effect") == "meteor" for c in game_a.commands_seen), "meteor item dispatched")
+        state_path = next((bridge_a / "state").glob("*_0_1.json"))
+        state_now = lambda: json.loads(state_path.read_text())
+        sent = lambda effect: any(c.get("effect") == effect for c in game_a.commands_seen)
+        event_time = lambda effect, kind: next(e["active_play_seconds"] for e in game_a.events_seen
+                                              if e.get("effect") == effect and e["type"] == kind)
+
+        # One real 20-30s rest: freeze the game clock, then reconnect after the fake game advanced
+        # 45 active seconds with the client offline. Neither pause nor offline time may spend the rest.
+        wait_for(lambda: state_now().get("trap_rest_remaining", 0) > 0, "rest saved after Slow-Mo")
+        game_a.set_paused(True)
+        time.sleep(1)
+        resting = state_now()["trap_rest_remaining"]
+        assert 19 <= resting <= 30, f"expected a freshly rolled 20-30s rest, got {resting}"
+        assert not sent("meteor"), "meteor skipped the post-trap rest"
+        time.sleep(1)
+        assert abs(state_now()["trap_rest_remaining"] - resting) < 0.05, "paused game spent trap rest"
+        connections = sum("Goal: collect" in line for line in logs["a"])
+        client_a.stdin.write("/exit\n")
+        client_a.stdin.flush()
+        client_a.wait(timeout=10)
+        game_a.set_paused(False)
+        game_a.advance_active_play(45)
+        game_a.set_paused(True)
+        time.sleep(0.5)  # publish the advanced clock while the client is still offline
+        client_a = start("a", args_a)
+        wait_for(lambda: sum("Goal: collect" in line for line in logs["a"]) > connections, "A reconnected during rest")
+        time.sleep(1)
+        assert abs(state_now()["trap_rest_remaining"] - resting) < 0.05, "restart rerolled or spent offline rest"
+        assert not sent("meteor"), "restart bypassed trap rest"
+        resumed_at = game_a.clock_fields()["active_play_seconds"]
+        game_a.set_paused(False)
+        wait_for(lambda: sent("meteor"), "meteor after remaining active-play rest", timeout=40)
         wait_for(lambda: seen("a", "Meteor Trap is active"), "five-meteor batch started")
+        elapsed = event_time("meteor", "effect_start") - resumed_at
+        assert resting - 0.25 <= elapsed <= resting + 3, (resting, elapsed)
+        print("PASS random trap rest pauses, survives client restart, and gives no offline time credit")
+
+        def advance_rest(next_effect: str, previous_effect: str, rest_started_at: float | None = None) -> None:
+            """Check the next rest boundary without adding another 20-30 wall seconds per native batch."""
+            wait_for(lambda: state_now().get("trap_rest_remaining", 0) > 0, f"rest saved after {previous_effect}")
+            remaining = state_now()["trap_rest_remaining"]
+            assert 19 <= remaining <= 30, remaining
+            assert not sent(next_effect), f"{next_effect} skipped rest after {previous_effect}"
+            game_a.advance_active_play(max(0, remaining - 5))
+            wait_for(lambda: state_now()["trap_rest_remaining"] < 6, "controlled active time applied to rest")
+            assert state_now()["trap_rest_remaining"] > 0 and not sent(next_effect), "next trap fired before rest ended"
+            game_a.advance_active_play(state_now()["trap_rest_remaining"] + 0.5)
+            wait_for(lambda: sent(next_effect), f"{next_effect} after {previous_effect} rest", timeout=40)
+            wait_for(lambda: any(e.get("effect") == next_effect and e["type"] == "effect_start"
+                                 for e in game_a.events_seen), f"{next_effect} start event")
+            if rest_started_at is None:
+                rest_started_at = event_time(previous_effect, "effect_end")
+            gap = event_time(next_effect, "effect_start") - rest_started_at
+            assert 20 <= gap <= 35, (previous_effect, next_effect, gap)
+
         # The fake game holds one five-meteor batch past the old (5 + 15)-second watchdog and its
         # 3-second dispatch gap. A queued Blackout must wait through the whole batch, even after restart.
-        state_path = next((bridge_a / "state").glob("*_0_1.json"))
         time.sleep(24)
         assert not any(c.get("effect") == "cars" for c in game_a.commands_seen), "cars interrupted meteor batch"
         assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "Blackout interrupted batch"
@@ -206,7 +293,7 @@ Dead as Disco:
         assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "meteor repeated"
         state = json.loads(state_path.read_text())
         assert state["effects_done"] == 2, state
-        wait_for(lambda: any(c.get("effect") == "cars" for c in game_a.commands_seen), "cars after meteor batch")
+        advance_rest("cars", "meteor")
         print("PASS five-meteor batch survives watchdog and client restart, consumes one item, then releases queue")
 
         wait_for(lambda: seen("a", "Prophet Car Trap is active"), "two-set car trap started")
@@ -226,13 +313,35 @@ Dead as Disco:
         time.sleep(1)
         assert sum(c.get("effect") == "cars" for c in game_a.commands_seen) == 1, "restart replayed car trap"
         assert not any(c.get("effect") == "blackout" for c in game_a.commands_seen), "restart interrupted cars"
+
+        # A pending trap can finish while the client is offline. Historical end events must start
+        # a fresh rest on reconnect, not spend it using game time the client never observed.
+        connections = sum("Goal: collect" in line for line in logs["a"])
+        client_a.stdin.write("/exit\n")
+        client_a.stdin.flush()
+        client_a.wait(timeout=10)
         game_a.finish_cars()
+        game_a.advance_active_play(45)
+        game_a.set_paused(True)
+        time.sleep(0.5)
+        client_a = start("a", args_a)
+        wait_for(lambda: sum("Goal: collect" in line for line in logs["a"]) > connections,
+                 "A reconnected after cars ended offline")
         wait_for(lambda: seen("a", "Prophet Car Trap wore off"), "car trap completed")
         state = json.loads(state_path.read_text())
         assert state["effects_done"] == 3 and state["pending_meteor"] is None, state
         assert sum(c.get("effect") == "cars" for c in game_a.commands_seen) == 1, "car trap repeated"
         assert sum(c.get("effect") == "meteor" for c in game_a.commands_seen) == 1, "earlier meteor repeated"
-        wait_for(lambda: any(c.get("effect") == "blackout" for c in game_a.commands_seen), "next trap after cars")
+        assert 20 <= state["trap_rest_remaining"] <= 30, state
+        assert not sent("blackout"), "offline car completion bypassed the rest"
+        time.sleep(1)
+        assert state_now()["trap_rest_remaining"] == state["trap_rest_remaining"], "paused reconnect spent rest"
+        # The 45 offline seconds intentionally separate the historical event and the live rest.
+        # Use the reconnect clock for the boundary assertion below.
+        rest_started_at = game_a.clock_fields()["active_play_seconds"]
+        game_a.set_paused(False)
+        advance_rest("blackout", "cars", rest_started_at)
+        print("PASS native trap ending offline starts a full rest on reconnect without replay")
         print("PASS two-set car trap survives watchdog and client restart, consumes one item, then releases queue")
 
         # Waves and kills send checks; clearing the goal wave with a Gold Record finishes.

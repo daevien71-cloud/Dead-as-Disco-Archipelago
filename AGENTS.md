@@ -81,6 +81,30 @@ Archipelago's `logs/DeadAsDiscoClient_*.txt`.
 
 ## Status (2026-10-19)
 
+v0.3.2 trap pacing is built and installed on Windows on `codex/trap-pacing`; public release remains v0.3.1.
+After each completed queued trap, the client rolls and saves 20–30 seconds of active Arcade rest.
+One whole meteor batch / both car sets count as one trap. The mod reports `clock_version=1`,
+`active_play_seconds`, and `active_play`, using native undilated `GetAudioTimeSeconds` only while
+the current run/pawn/world are valid, unpaused and outside wave-clear downtime. State/world changes,
+death and failed clock reads rebase conservatively. Native adapters are unchanged.
+The rest survives reconnects without rerolling or offline catch-up; a first-status floor also protects
+replayed completion events. FIFO is preserved; a Fever already ahead of the next trap may run during
+rest without resetting it. `/disco` shows the remainder; manual probes bypass the queue.
+`pending_effect` now journals all effects before command append; `pending_meteor` remains a native-only
+legacy mirror without new fields. Modern acknowledgements match command session plus ID. A client
+talking to a clockless older mod uses legacy ID-only matching and holds subsequent traps for an update.
+Update both the mod and APWorld; existing multiworlds need no regeneration.
+Automated validation passed: 109 Python tests, 217 main Lua checks, 267 meteor checks, 320 car checks,
+13 real-server/fake-game E2E checks, 10 updater tests, six Linux installer tests, and exact source/package
+byte verification. Claude approved the final changes. The Windows mod and APWorld are installed at
+v0.3.2; native adapters match v0.3.1. Previous installation is backed up locally.
+Live real-AP proof passed across a song transition: first started Slow-Mo ended with the song, then a
+20-second roll waited 21.095 active seconds before the second trap. The clock stayed exactly flat
+through 115.428 seconds between runs. A real-client reconnect consumed the final receipt without
+sending another effect: two items consumed, no pending journal. The original runner expected two
+normal expirations, so preserve its failure plus the separate transition audit; do not mislabel this
+as an uninterrupted-run or dedicated pause test. See NOTES.md for evidence and instrumentation fix.
+
 v0.1.0 works on Windows and Linux and has been played with friends.
 
 v0.2.0 adds an opt-in **Meteor Trap** (814200105), off in the default trap set. Each item rolls 1–5
@@ -125,8 +149,8 @@ minus 45 degrees then plus 45 degrees. Final installed AP delivery passed: one i
 yaws -18.7 / 71.3 through the same center, fully removed each set, and saved one consumption with
 no pending item or survivors. The owner confirmed the X looked perfect. `/testeffect car` retains
 one forward-facing car; `/testeffect cars` requests both sets.
-The installed mod now matches production v0.3.1 source; the temporary hotloader has been removed.
-The installed APWorld also matches v0.3.1; existing v0.3.0 clients remain compatible.
+The v0.3.1 release removed the temporary hotloader; it remains absent in the current installation.
+Existing v0.3.0 clients remain compatible with the v0.3.1 car fixes; v0.3.2 pacing needs both parts updated.
 Follow `docs/cars.md` for remaining live checks.
 
 `cars.lua` reuses native warning/movement/damage. It measures geometry, freezes collision through
@@ -148,6 +172,8 @@ Linux installer tests passed. Release archive contents and source bytes were ver
 
 ## Next
 
+- Publish v0.3.2 when requested; package and local Windows installation are ready. Public updater remains
+  v0.3.1. Remaining pacing coverage: dedicated mid-rest pause, native-batch gap and Linux/Proton live checks.
 - Use public v0.3.1 as the baseline for further work; keep both native traps opt-in while broader
   arena, transition and Linux/Proton testing continues.
 - Complete car pause, downtime, menu/death/song/arena, reconnect and Linux/Proton checks in `docs/cars.md`.
