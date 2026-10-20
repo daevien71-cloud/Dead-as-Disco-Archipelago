@@ -81,7 +81,10 @@ Archipelago's `logs/DeadAsDiscoClient_*.txt`.
 
 ## Status (2026-10-19)
 
-v0.3.2 trap pacing is built and installed on Windows on `codex/trap-pacing`; public release remains v0.3.1.
+v0.3.2 trap pacing is [published as the latest release](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.2)
+and installed on Windows. Tag `v0.3.2` points to tested commit `8c1f56a`; both `main` and the legacy
+updater branch include it. Public installer ZIP, standalone APWorld and checksums were downloaded
+and verified against the tested local artifacts. The Linux updater can now fetch this version.
 After each completed queued trap, the client rolls and saves 20–30 seconds of active Arcade rest.
 One whole meteor batch / both car sets count as one trap. The mod reports `clock_version=1`,
 `active_play_seconds`, and `active_play`, using native undilated `GetAudioTimeSeconds` only while
@@ -138,8 +141,8 @@ meteor items queued. See `docs/meteor-research.md` for exact hook contracts and 
 - **Last fix:** joining a new multiworld no longer counts kills/waves left over in the event log from earlier
   play.
 
-v0.3.1 is [published on GitHub](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.1)
-as the latest release. Tag `v0.3.1` points to `2845251`; `main` and the legacy updater branch both
+v0.3.1 remains [available on GitHub](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.1)
+as an earlier release. Tag `v0.3.1` points to `2845251`; `main` and the legacy updater branch both
 include it. It fixes the **experimental Prophet Car Trap** and includes the live-tested meteor work.
 Live manual testing confirmed readable warnings, two sequential sets of
 three cars at the faster 3,200-unit/second speed, native player/enemy damage, and zero survivors after
@@ -166,15 +169,14 @@ Saved keys `pending_meteor`, `meteor_start_failures`, and `meteor_retry_at` reta
 but now represent the single native-effect slot for either meteor or cars. Preserve this compatibility.
 Manual probes are isolated by command ID and cannot consume or clear pending AP items.
 
-Offline validation: 84 Python unit tests, 136 main Lua checks, 320 car checks across 88 scenarios,
+v0.3.1 offline validation: 84 Python unit tests, 136 main Lua checks, 320 car checks across 88 scenarios,
 267 meteor checks across 51 scenarios, 11 real-server/fake-game E2E checks, 10 updater tests and six
 Linux installer tests passed. Release archive contents and source bytes were verified.
 
 ## Next
 
-- Publish v0.3.2 when requested; package and local Windows installation are ready. Public updater remains
-  v0.3.1. Remaining pacing coverage: dedicated mid-rest pause, native-batch gap and Linux/Proton live checks.
-- Use public v0.3.1 as the baseline for further work; keep both native traps opt-in while broader
+- Remaining pacing coverage: dedicated mid-rest pause, native-batch gap and Linux/Proton live checks.
+- Use public v0.3.2 as the baseline for further work; keep both native traps opt-in while broader
   arena, transition and Linux/Proton testing continues.
 - Complete car pause, downtime, menu/death/song/arena, reconnect and Linux/Proton checks in `docs/cars.md`.
 - Complete the remaining queued-batch, pause-during-flight, menu/death/song/arena, reconnect and

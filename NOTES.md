@@ -3,6 +3,23 @@
 Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
 [AGENTS.md](AGENTS.md).
 
+## Public v0.3.2 release (2026-10-19)
+
+- At the owner's request, published [v0.3.2](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.2)
+  as the latest public GitHub release. Annotated tag `v0.3.2` points to tested commit `8c1f56a`.
+  Fast-forwarded `main` and `claude/trusting-cori-vg0cjc` together in an atomic push; no remote work
+  was overwritten. Both current and older ZIP-installed updaters can fetch the new build.
+- Uploaded the installer ZIP, standalone APWorld and SHA256SUMS.txt to a draft, then published it
+  as latest after upload checks. Downloaded all three without authentication and verified SHA-256
+  against the tested local artifacts. Evidence: ignored `playtest/published-v0.3.2.json`.
+- Independent read-only audit confirmed the release/APWorld contents exactly match source, the
+  isolated tested runtime matches the current APWorld, and prior full-suite results remain applicable.
+  No runtime changes or additional game restart were needed for publication. Release notes clearly
+  distinguish the verified Windows song-transition path from remaining Linux and pause/native checks.
+- Linux: close the game and client, run `bash Update-Linux.sh`, then restart the Launcher/client.
+  The updater copies the APWorld when it detects a recognized Archipelago worlds directory;
+  otherwise install the updated root `.apworld` with the Launcher's Install APWorld action.
+
 ## Queued trap pacing, v0.3.2 candidate (2026-10-19)
 
 - The owner reported a multiplayer backlog firing traps back-to-back after returning, and requested
