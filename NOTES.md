@@ -3,6 +3,22 @@
 Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
 [AGENTS.md](AGENTS.md).
 
+## Public v0.3.1 release (2026-10-19)
+
+- At the owner's request, published [v0.3.1](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.1)
+  as the latest public GitHub release. The annotated tag points to tested commit `2845251`.
+  Fast-forwarded `main` and `claude/trusting-cori-vg0cjc` together; no remote work was overwritten.
+- Uploaded the full installer ZIP, standalone APWorld, and SHA256SUMS.txt. Downloaded all three
+  through their public URLs without authentication and verified exact SHA-256 matches to local files.
+  Release creation used a draft until every asset was uploaded, then published it as latest.
+- Fresh pre-publication validation passed: 136 main Lua checks, 267 meteor checks, 320 car checks,
+  84 Python unit tests, 11 real-server/fake-game E2E checks, 10 updater tests and six Linux installer
+  tests. All four Lua modules parsed and matched release archive bytes. The Windows updater checks
+  ran after the owner closed the game. No further gameplay changes were needed after live proof.
+- The previous dirty prototype checkout, personal mods, proprietary extracts, bridge state and test
+  logs remain local. Publication evidence is ignored under `playtest/published-v0.3.1.json`; the
+  release notes describe opt-in traps and remaining arena/transition/Linux live checks.
+
 ## Prophet car live bring-up (2026-10-19)
 
 - v0.3.1 fixes the v0.3.0 bring-up issues below. The owner confirmed the corrected single car worked

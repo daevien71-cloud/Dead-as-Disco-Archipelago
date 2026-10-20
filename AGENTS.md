@@ -114,8 +114,10 @@ meteor items queued. See `docs/meteor-research.md` for exact hook contracts and 
 - **Last fix:** joining a new multiworld no longer counts kills/waves left over in the event log from earlier
   play.
 
-v0.3.1 fixes the **experimental Prophet Car Trap**, on `codex/prophet-car-trap` from the live-tested
-meteor commit `c8a1e54`. Live manual testing confirmed readable warnings, two sequential sets of
+v0.3.1 is [published on GitHub](https://github.com/daevien71-cloud/Dead-as-Disco-Archipelago/releases/tag/v0.3.1)
+as the latest release. Tag `v0.3.1` points to `2845251`; `main` and the legacy updater branch both
+include it. It fixes the **experimental Prophet Car Trap** and includes the live-tested meteor work.
+Live manual testing confirmed readable warnings, two sequential sets of
 three cars at the faster 3,200-unit/second speed, native player/enemy damage, and zero survivors after
 cleanup. Item 814200106 remains off by default and shares the native effect slot with meteors.
 The owner then requested an X: both sets now share the initial grounded center, using initial facing
@@ -146,6 +148,8 @@ Linux installer tests passed. Release archive contents and source bytes were ver
 
 ## Next
 
+- Use public v0.3.1 as the baseline for further work; keep both native traps opt-in while broader
+  arena, transition and Linux/Proton testing continues.
 - Complete car pause, downtime, menu/death/song/arena, reconnect and Linux/Proton checks in `docs/cars.md`.
 - Complete the remaining queued-batch, pause-during-flight, menu/death/song/arena, reconnect and
   Linux/Proton live checks in `docs/meteor.md`.
