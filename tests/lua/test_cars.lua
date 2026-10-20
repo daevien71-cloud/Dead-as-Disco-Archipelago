@@ -2,7 +2,6 @@
 -- Usage: lua tests/lua/test_cars.lua <repo root>
 local root = assert(arg[1], "pass the repo root")
 package.path = root .. "/mod/DeadAsDiscoAP/Scripts/?.lua;" .. package.path
-local Cars = require("cars")
 local BASE = "/Game/LevelPrototyping/Prototype_Blueprints/"
 local CAR = BASE .. "BP_Prophet_Highway_Car.BP_Prophet_Highway_Car_C"
 local WARNING = BASE .. "BP_CarWarningIndicator.BP_CarWarningIndicator_C"
@@ -36,10 +35,35 @@ local function transformed(t, point)
         t.location.Y + point.X*t.scale.X*s + point.Y*t.scale.Y*c,
         t.location.Z + point.Z*t.scale.Z)
 end
+local function composed(relative, parent)
+    -- UE5.7 TransformNonVectorized.h:1341-1343 and SceneComponent.cpp:720:
+    -- positive scales multiply componentwise before the combined rotation.
+    -- This is FTransform composition, not an affine matrix containing shear.
+    return {location=transformed(parent,relative.location), yaw=parent.yaw+relative.yaw,
+        scale=vec(relative.scale.X*parent.scale.X,relative.scale.Y*parent.scale.Y,relative.scale.Z*parent.scale.Z)}
+end
+local function warning_bounds_in_route(warning, origin, yaw)
+    local lo,hi=vec(math.huge,math.huge,math.huge),vec(-math.huge,-math.huge,-math.huge)
+    local c,s=math.cos(math.rad(yaw)),math.sin(math.rad(yaw))
+    for _,name in ipairs(ROAD) do
+        local mesh=warning[name]
+        for _,x in ipairs({-mesh.extent.X,mesh.extent.X}) do
+            for _,y in ipairs({-mesh.extent.Y,mesh.extent.Y}) do
+                for _,z in ipairs({-mesh.extent.Z,mesh.extent.Z}) do
+                    local p=transformed(mesh:K2_GetComponentToWorld(),vec(x,y,z))
+                    local dx,dy=p.X-origin.X,p.Y-origin.Y
+                    local route=vec(dx*c+dy*s,-dx*s+dy*c,p.Z-origin.Z)
+                    for _,axis in ipairs({"X","Y","Z"}) do lo[axis]=math.min(lo[axis],route[axis]);hi[axis]=math.max(hi[axis],route[axis]) end
+                end
+            end
+        end
+    end
+    return lo,hi
+end
 local function fixture(options)
     options = options or {}
     local f = {time=100, paused=false, actors={}, cars={}, warnings={}, logs={}, notices={}, events={},
-        loads={}, begin_calls=0, finish_calls=0, synthetic_damage_calls=0, native_starts=0}
+        loads={}, begin_calls=0, finish_calls=0, synthetic_damage_calls=0, native_starts=0, validity_calls=0}
     f.world, f.state = object("Arcade world"), object("Arcade state")
     f.position, f.yaw = vec(1000,2000,500), options.yaw or 0
     f.player = object("controlled Charlie", {
@@ -54,20 +78,25 @@ local function fixture(options)
     if options.unloaded then f.classes = {} end
 
     local function component(actor, name, local_position, extent, parent, kind)
-        local c = object(name, {actor=actor, local_position=local_position, extent=extent, parent=parent, kind=kind})
+        local c = object(name, {actor=actor, extent=extent, parent=parent, kind=kind,
+            RelativeLocation=copy(local_position), RelativeScale3D=vec(1,1,1), RelativeRotation={Pitch=0,Yaw=0,Roll=0}})
         function c:GetAttachParent() return self.parent end
         function c:GetLocalBounds(lower, upper)
             for _, axis in ipairs({"X","Y","Z"}) do lower[axis],upper[axis]=-self.extent[axis],self.extent[axis] end
             if options.bad_warning_bounds and not actor.is_car then upper.X=lower.X end
         end
         function c:K2_GetComponentToWorld()
-            local t = {location=transformed(actor.transform,self.local_position), yaw=actor.transform.yaw, scale=copy(actor.transform.scale)}
+            local parent_world=self.parent and self.parent:K2_GetComponentToWorld() or actor.transform
+            local t=composed({location=self.RelativeLocation,yaw=self.RelativeRotation.Yaw,scale=self.RelativeScale3D},parent_world)
+            if self.bAbsoluteLocation then t.location=copy(self.RelativeLocation) end
+            if self.bAbsoluteRotation then t.yaw=self.RelativeRotation.Yaw end
+            if self.bAbsoluteScale then t.scale=copy(self.RelativeScale3D) end
             if options.bad_axis then t.yaw = t.yaw + 90 end
             if options.scaled_axis then t.scale.X = 2 end
             if options.absolute_root_rotation and self==actor.root then t.yaw=0 end
             if options.warning_absolute and not actor.is_car then
-                t.location=vec(actor.transform.location.X+self.local_position.X,actor.transform.location.Y+self.local_position.Y,
-                    actor.transform.location.Z+self.local_position.Z)
+                t.location=vec(actor.transform.location.X+self.RelativeLocation.X,actor.transform.location.Y+self.RelativeLocation.Y,
+                    actor.transform.location.Z+self.RelativeLocation.Z)
                 t.yaw,t.scale=0,vec(1,1,1)
             end
             return t
@@ -76,14 +105,8 @@ local function fixture(options)
     end
 
     function f.world_bounds(c)
-        local local_position = copy(c.local_position)
-        if c.kind == "train" then local_position = copy(c.actor.Train.RelativeLocation)
-        elseif c.kind == "collider" then
-            local train = c.actor.Train.RelativeLocation
-            local_position = vec(train.X+local_position.X, train.Y+local_position.Y, train.Z+local_position.Z)
-        end
-        local origin = transformed(c.actor.transform, local_position)
-        local t, e = c.actor.transform, c.extent
+        local t, e = c:K2_GetComponentToWorld(), c.extent
+        local origin=copy(t.location)
         local cs, sn = math.abs(math.cos(math.rad(t.yaw))), math.abs(math.sin(math.rad(t.yaw)))
         local extent = vec(e.X*t.scale.X*cs+e.Y*t.scale.Y*sn, e.X*t.scale.X*sn+e.Y*t.scale.Y*cs, e.Z*t.scale.Z)
         if options.invalid_bounds then extent.X = 0 end
@@ -96,8 +119,12 @@ local function fixture(options)
             is_car=is_car, transform=t, collision=true, hidden=false, destroy_calls=0, starts={}, warnings={},
         })
         a.ordinal = #f.actors + 1
-        function a:IsActorBeingDestroyed() return self._destroying == true end
+        function a:IsActorBeingDestroyed()
+            if options.refuse_destroyed_events and self._garbage then return false end
+            return self._destroying == true
+        end
         function a:K2_GetActorLocation() return self.transform.location end
+        function a:GetActorScale3D() return copy(self.transform.scale) end
         function a:K2_SetActorTransform(new_t, sweep, hit, teleport)
             assert(sweep == false and teleport == true, "placement uses no sweep and teleports")
             if options.place_fails and self.ordinal == options.place_fails then return false end
@@ -121,7 +148,7 @@ local function fixture(options)
             self.destroy_calls = self.destroy_calls + 1
             if options.destroy_throws == true or options.destroy_throws == self.ordinal then error("native destroy unavailable") end
             if options.destroy_ignored == true or options.destroy_ignored == self.ordinal then return end
-            self._destroying = true
+            self._destroying, self._garbage = true, true
             if not options.defer_gc then self._valid = false end
         end
         function a:HitCharacters() f.synthetic_damage_calls=f.synthetic_damage_calls+1; error("must use native overlaps") end
@@ -129,6 +156,7 @@ local function fixture(options)
             a.root = component(a, "car root", vec(0,0,0), vec(1,1,1), nil)
             a.Train = component(a, "Train", vec(120,20,60), vec(160,70,60), a.root, "train")
             a.Train.RelativeLocation = vec(120,20,60)
+            if options.authored_train_scale then a.Train.RelativeScale3D=copy(options.authored_train_scale) end
             a.HitCollisionSphere = component(a, "HitCollisionSphere", vec(-20,20,0), vec(200,95,65), a.Train, "collider")
             a.BodyCollisionBox = component(a, "BodyCollisionBox", vec(5,-30,-5), vec(180,80,55), a.Train, "collider")
             if options.bad_hierarchy then a.BodyCollisionBox.parent = object("unrelated scene component") end
@@ -164,7 +192,12 @@ local function fixture(options)
                 if i <= 5 then position, extent = vec((i-3)*200,0,0), vec(100,20,1)
                 else position, extent = vec(0,i==6 and -60 or 60,0), vec(500,5,1) end
                 if options.warning_long_y then position.X,position.Y=position.Y,position.X;extent.X,extent.Y=extent.Y,extent.X end
+                if options.warning_offset then
+                    position=vec(position.X+options.warning_offset.X,position.Y+options.warning_offset.Y,position.Z+options.warning_offset.Z)
+                end
+                if options.rotated_road then extent=vec(extent.Y,extent.X,extent.Z) end
                 a[name] = component(a, name, position, extent, nil)
+                if options.rotated_road then a[name].RelativeRotation.Yaw=90 end
             end
             a.TrainArrowLeft, a.BorderLeftMaterial = object("arrow dynamic material"), object("border dynamic material")
             if options.missing_material then a.BorderLeftMaterial._valid = false end
@@ -179,6 +212,7 @@ local function fixture(options)
     function f.statics:IsGamePaused() return f.paused end
     function f.statics:GetTimeSeconds() return f.time end
     function f.statics:BeginDeferredActorSpawnFromClass(context, cls, t, collision, owner, scale)
+        assert(f.preflight_valid and f.preflight_nil,"native validity is preflighted on a live object and nil before any spawn")
         f.begin_calls = f.begin_calls+1
         assert(context == f.player and owner == nil and scale == 1 and collision == 1, "native deferred spawn contract")
         assert(cls == f.car_class or cls == f.warning_class, "only native cars and warnings are spawned")
@@ -189,9 +223,12 @@ local function fixture(options)
         f.finish_calls = f.finish_calls+1
         assert(a.transform == t and scale == 1, "finish receives the deferred transform")
         assert(not a.collision, "collision disabled before native BeginPlay")
+        local authored_scale
+        if a.is_car then authored_scale=options.authored_car_scale else authored_scale=options.authored_warning_scale end
+        if authored_scale then a.transform={location=copy(t.location),yaw=t.yaw,scale=copy(authored_scale)} end
         if a.is_car then
             assert(a.ShouldLoop == false and a["ResetPositionOnEnd?"] == false, "loop/reset disabled before native BeginPlay")
-            assert(a.Vector.X == 1 and a.Vector.Y == 0 and a.Vector.Z == 0 and a.Speed == 1600 and a.LoopDistance == 4000,
+            assert(a.Vector.X == 1 and a.Vector.Y == 0 and a.Vector.Z == 0 and type(a.Speed)=="number" and a.Speed>0 and a.LoopDistance == 4000,
                 "native movement configured before BeginPlay")
             assert(a.StartTag.TagName == "None" and a.WarningYellowStartTag.TagName == "None"
                 and a.WarningRedStartTag.TagName == "None" and a.BP_CarLaneManager == nil,
@@ -204,6 +241,22 @@ local function fixture(options)
         return a
     end
     local mathlib, system = object("KismetMathLibrary"), object("KismetSystemLibrary")
+    local native_validity = object("/Script/Engine.KismetSystemLibrary:IsValid")
+    setmetatable(native_validity,{__call=function(fn, context, actor)
+        assert(fn==native_validity and context==system,"bound native validity receives the live library CDO as explicit receiver")
+        f.validity_calls=f.validity_calls+1
+        if actor==f.statics then f.preflight_valid=true end
+        if actor==nil then f.preflight_nil=true end
+        if options.validity_throws then error("native validity binding failed") end
+        if options.validity_always_false then return false end
+        if options.validity_always_true then return true end
+        if options.validity_returns_nil then return nil end
+        return actor~=nil and actor._valid and not actor._garbage
+    end})
+    function system:GetPropertyValue(name)
+        assert(name=="IsValid","only the colliding reflected IsValid function needs explicit property lookup")
+        return native_validity
+    end
     function mathlib:MakeTransform(location, rotation, scale)
         return {location=copy(location), yaw=rotation.Yaw, scale=copy(scale)}
     end
@@ -238,11 +291,12 @@ local function fixture(options)
                 end
                 if a.IsMoveActive and a.drive_at then
                     local elapsed = f.time-a.drive_at
-                    a.Train.RelativeLocation.X = a.StartLocation.X + math.min(elapsed,2.5)*a.Speed
-                    if elapsed >= 2.5 and not options.movement_stuck then a.IsMoveActive=false end
+                    local travelled=math.min(elapsed*a.Speed,a.LoopDistance)
+                    a.Train.RelativeLocation.X = a.StartLocation.X + travelled
+                    if travelled >= a.LoopDistance and not options.movement_stuck then a.IsMoveActive=false end
                 end
             end
-            if a._valid and a.expires and f.time >= a.expires then a._valid=false;a._destroying=true end
+            if a._valid and a.expires and f.time >= a.expires then a._valid=false;a._destroying=true;a._garbage=true end
         end
     end
     function f.tick(seconds)
@@ -262,12 +316,75 @@ local function fixture(options)
     function f.live_count()
         local n=0; for _, a in ipairs(f.actors) do if a._valid and not a._destroying then n=n+1 end end; return n
     end
-    f.adapter = Cars.new(function(message) f.logs[#f.logs+1]=message end)
+    -- A fresh adapter module matches a new game load and keeps cached CDOs fixture-local.
+    f.adapter = dofile(root .. "/mod/DeadAsDiscoAP/Scripts/cars.lua").new(function(message) f.logs[#f.logs+1]=message end)
     return f
 end
 
+scenario("fixture composes rotated components using native FTransform scale order",function()
+    local t=composed({location=vec(10,20,0),yaw=90,scale=vec(2,3,1)},
+        {location=vec(0,0,0),yaw=0,scale=vec(4,5,1)})
+    local p=transformed(t,vec(1,0,0))
+    check(approx(p.X,40) and approx(p.Y,108),"component scale multiplies before combined rotation; affine nesting would produce Y=110")
+    check(t.scale.X==8 and t.scale.Y==15 and t.yaw==90,"relative and parent scale remain componentwise")
+end)
+
+scenario("rotated warning meshes expose naive actor-axis fit safely",function()
+    local f=fixture({rotated_road=true})
+    local ok,reason=f.start(true)
+    check(not ok and reason=="spawn_failed","rotated local mesh axes prevent an unsafe warning fit")
+    check(f.warnings[1].Arrow_01.RelativeRotation.Yaw==90 and f.native_starts==0 and f.live_count()==0,
+        "unfitted rotated warning and frozen car are removed before launch")
+    check(table.concat(f.logs,"\n"):find("native warning does not follow the fitted route",1,true)~=nil,
+        "rotated mesh reproduction reaches the post-placement bounds check")
+end)
+
+for _,failure in ipairs({"validity_throws","validity_always_false","validity_always_true","validity_returns_nil"}) do
+    scenario("native validity preflight rejects "..failure,function()
+        local f=fixture({[failure]=true});local ok,reason=f.start()
+        check(not ok and reason=="spawn_failed","bad native validity binding returns a clean startup failure")
+        check(f.begin_calls==0 and #f.actors==0 and not f.adapter.active and #f.adapter.stranded==0,
+            "failed validity preflight owns no actors and needs no rollback")
+    end)
+end
+
+for _,deferred in ipairs({false,true}) do
+    scenario("validity exception cannot abandon actors with deferred GC="..tostring(deferred),function()
+        local options={defer_gc=deferred,refuse_destroyed_events=true}
+        local f=fixture(options);check(f.start(),"validity exception batch starts with working binding")
+        options.validity_throws=true
+        local ok=pcall(function() f.adapter:stop("left_run") end)
+        local all_attempted=true
+        for _,a in ipairs(f.actors) do
+            all_attempted=all_attempted and a.destroy_calls==1 and not a.collision and a.hidden
+        end
+        check(ok and all_attempted and f.live_count()==0 and not f.adapter.active,
+            "cleanup independently attempts destruction on every tracked actor after validity calls fail")
+        check(#f.adapter.stranded==(deferred and 6 or 0),
+            "only actors whose removal remains unverified are retained in quarantine")
+        options.validity_throws=false
+        check(f.adapter:ready(f.player) and #f.adapter.stranded==0,
+            "restored native validity clears removed actors without leaving a permanent block")
+    end)
+end
+
+scenario("malformed runtime validity retains unverified actors until binding recovers",function()
+    local options={defer_gc=true,refuse_destroyed_events=true}
+    local f=fixture(options);check(f.start(),"malformed validity scenario starts with working binding")
+    options.validity_returns_nil=true
+    local ok=pcall(function() f.adapter:stop("left_run") end)
+    local all_attempted=true
+    for _,a in ipairs(f.actors) do all_attempted=all_attempted and a.destroy_calls==1 end
+    check(ok and all_attempted and f.live_count()==0,"malformed validity cannot skip destruction of tracked actors")
+    check(#f.adapter.stranded==6 and not f.adapter.active,"non-boolean validity leaves all unverified references quarantined")
+    local started,reason=f.start()
+    check(not started and reason=="busy" and f.begin_calls==6,"unverified removal blocks additional spawns")
+    options.validity_returns_nil=false
+    check(f.adapter:ready(f.player) and #f.adapter.stranded==0,"verified removal clears quarantine after binding recovers")
+end)
+
 scenario("native deferred initialization and measured geometry", function()
-    local f=fixture({unloaded=true})
+    local f=fixture({unloaded=true,yaw=45})
     local ok,sets=f.start()
     check(ok and sets==2 and #f.cars==3 and #f.warnings==3 and #f.loads==2,"normal trap prepares exactly three native cars and three warnings")
     check(#f.notices==1 and f.notices[1].index==1 and f.notices[1].total==2,"set is announced after all native actors are prepared")
@@ -289,7 +406,7 @@ scenario("native deferred initialization and measured geometry", function()
 end)
 
 scenario("route follows actor yaw without swapping measured dimensions", function()
-    local f=fixture({yaw=90})
+    local f=fixture({yaw=135})
     check(f.start(),"rotated route starts")
     for i,car in ipairs(f.cars) do
         local center=f.world_bounds(car.Train)
@@ -301,7 +418,7 @@ scenario("route follows actor yaw without swapping measured dimensions", functio
 end)
 
 scenario("diagonal route retains actual lane width and swept length",function()
-    local f=fixture({yaw=45});check(f.start(),"diagonal route starts")
+    local f=fixture({yaw=90});check(f.start(),"diagonal route starts")
     for i,car in ipairs(f.cars) do
         local center=f.world_bounds(car.Train);local lane=(i-2)*490
         check(approx(center.X,1000+(-2000-lane)/math.sqrt(2)) and approx(center.Y,2000+(-2000+lane)/math.sqrt(2)),
@@ -310,6 +427,38 @@ scenario("diagonal route retains actual lane width and swept length",function()
             "diagonal warning scaling uses projected mesh corners rather than world AABB width")
     end
     f.adapter:stop("test cleanup")
+end)
+
+for _,yaw in ipairs({0,-138.555}) do
+    scenario("authored warning scale survives fitting at yaw "..yaw,function()
+        local f=fixture({yaw=yaw+45,authored_warning_scale=vec(3,3,3),authored_train_scale=vec(1.5,1.5,1.5),
+            warning_offset=vec(81,-35,4)})
+        check(f.start(),"authored-scale set fits after native construction")
+        local c,s=math.cos(math.rad(yaw)),math.sin(math.rad(yaw))
+        for i,car in ipairs(f.cars) do
+            local center,extent=f.world_bounds(car.Train)
+            local lane=(i-2)*605
+            check(approx(center.X,1000-2000*c-lane*s) and approx(center.Y,2000-2000*s+lane*c)
+                and approx(center.Z-extent.Z,415),"authored car mesh size and floor clearance survive route placement")
+            check(car:GetActorScale3D().X==1 and car.Train.RelativeScale3D.X==1.5,
+                "unit movement parent and authored mesh scale remain independent")
+            local warning=f.warnings[i]
+            check(approx(warning:GetActorScale3D().X,4.74) and approx(warning:GetActorScale3D().Y,425/130)
+                and warning:GetActorScale3D().Z==3,"fit multiplies the authored warning scale by measured ratios")
+            local lo,hi=warning_bounds_in_route(warning,vec(1000-lane*s,2000+lane*c,410),yaw)
+            check(approx(lo.X,-2370) and approx(hi.X,2370) and approx(lo.Y,-212.5) and approx(hi.Y,212.5)
+                and approx(lo.Z,3),"native warning corners cover the entire swept lane with the required floor offset")
+        end
+        f.adapter:stop("test cleanup")
+    end)
+end
+
+scenario("authored actor scale cannot silently change native travel distance",function()
+    local f=fixture({authored_car_scale=vec(1.5,1.5,1.5)})
+    local ok,reason=f.start(true)
+    check(not ok and reason=="spawn_failed" and f.native_starts==0,"scaled movement parent fails closed before a longer-than-marked sweep")
+    check(f.live_count()==0 and #f.adapter.stranded==0 and f.cars[1]:GetActorScale3D().X==1.5,
+        "unsupported authored car scale is preserved for diagnosis and its actor cleaned")
 end)
 
 scenario("absolute movement-parent rotation fails post-placement readback",function()
@@ -337,7 +486,22 @@ scenario("delayed LevelLoaded precedes complete warning and near-hit timing", fu
     check(f.native_starts==1 and car.IsMoveActive and car.collision and #car.PlayersHit==0 and #car.EnemiesHit==0,
         "native StartCar clears hit bookkeeping and collision is enabled only after full warning")
     check(approx(car.starts[1],103.5) and f.synthetic_damage_calls==0,"launch timing is exact and damage remains native")
-    check(f.tick(2.5)=="native_finished" and f.live_count()==0,"native movement stops after 2.5 seconds and owned actors are cleaned")
+    check(f.tick(1.25)=="native_finished" and f.live_count()==0,"native movement stops after 1.25 seconds and owned actors are cleaned")
+end)
+
+scenario("doubled driving speed crosses the warning center halfway through a 1.25-second sweep",function()
+    local f=fixture();check(f.start(true),"faster car probe starts")
+    f.begin_driving()
+    local car=f.cars[1]
+    f.tick(0.625)
+    local center=f.world_bounds(car.Train)
+    check(approx(center.X,f.position.X) and approx(center.Y,f.position.Y) and car.IsMoveActive and car.collision,
+        "native car covers the first two thousand units in 0.625 seconds")
+    f.tick(0.615)
+    check(f.live_count()==2 and car.IsMoveActive and approx(car.Train.RelativeLocation.X-car.StartLocation.X,3968),
+        "car remains active just before completing the unchanged four-thousand-unit route")
+    check(f.tick(0.01)=="native_finished" and f.live_count()==0
+        and approx(car.Train.RelativeLocation.X-car.StartLocation.X,4000),"full route ends after 1.25 seconds with native cleanup")
 end)
 
 scenario("two sets serialize all six actors and enforce a one-second gap", function()
@@ -345,7 +509,7 @@ scenario("two sets serialize all six actors and enforce a one-second gap", funct
     check(f.start(),"two-set trap starts")
     f.begin_driving()
     check(f.native_starts==3,"first set starts three native cars")
-    f.tick(2.49)
+    f.tick(1.24)
     check(f.begin_calls==6 and f.live_count()==6,"second set never overlaps the first moving set")
     f.tick(0.01)
     check(f.live_count()==0 and f.adapter.active.phase=="between","all six first-set actors are invalid before between-set phase")
@@ -354,12 +518,54 @@ scenario("two sets serialize all six actors and enforce a one-second gap", funct
     f.tick(0.01)
     check(f.begin_calls==12 and f.live_count()==6 and #f.notices==2,"second set prepares only after complete cleanup and gap")
     f.begin_driving()
-    check(f.tick(2.5)=="native_finished" and f.live_count()==0 and f.native_starts==6,"two sets finish with exactly six native car launches")
+    check(f.tick(1.25)=="native_finished" and f.live_count()==0 and f.native_starts==6,"two sets finish with exactly six native car launches")
+end)
+
+scenario("sequential diagonal sets form a fixed X despite player movement and turning",function()
+    local f=fixture({yaw=30,authored_warning_scale=vec(3,3,3)})
+    local anchor=copy(f.position);anchor.Z=anchor.Z-90
+    check(f.start(),"crossing set batch starts")
+    for set=1,2 do
+        local yaw=set==1 and -15 or 75
+        local c,s=math.cos(math.rad(yaw)),math.sin(math.rad(yaw))
+        for lane_index=1,3 do
+            local index=(set-1)*3+lane_index
+            local car,warning=f.cars[index],f.warnings[index]
+            local lane=(lane_index-2)*490
+            local lane_center=vec(anchor.X-lane*s,anchor.Y+lane*c,anchor.Z)
+            local center,extent=f.world_bounds(car.Train)
+            check(approx(car.transform.yaw,yaw) and approx(warning.transform.yaw,yaw)
+                and approx(center.X,lane_center.X-2000*c) and approx(center.Y,lane_center.Y-2000*s)
+                and approx(center.Z-extent.Z,anchor.Z+5),"set "..set.." lane "..lane_index.." begins on its diagonal around the original grounded center")
+            local lo,hi=warning_bounds_in_route(warning,lane_center,yaw)
+            check(approx(lo.X,-2260) and approx(hi.X,2260) and approx(lo.Y,-155) and approx(hi.Y,155)
+                and approx(lo.Z,3),"set "..set.." warning covers its complete rotated sweep at the fixed floor")
+        end
+        f.begin_driving();f.tick(0.625)
+        for lane_index=1,3 do
+            local index=(set-1)*3+lane_index
+            local lane=(lane_index-2)*490
+            local center=f.world_bounds(f.cars[index].Train)
+            check(approx(center.X,anchor.X-lane*s) and approx(center.Y,anchor.Y+lane*c),
+                "set "..set.." native movement follows its diagonal through the original crossing")
+        end
+        local reason=f.tick(0.625)
+        if set==1 then
+            check(reason==nil and f.live_count()==0 and f.begin_calls==6,"first diagonal is fully removed before preparing the crossing set")
+            -- Mutate the returned location table too, catching an accidentally retained alias.
+            f.position.X,f.position.Y,f.position.Z=4200,-800,900
+            f.yaw=-70
+            f.tick(1)
+        else
+            check(reason=="native_finished" and f.live_count()==0 and f.native_starts==6,"second diagonal completes without overlapping the first set")
+        end
+    end
+    check(approx(f.cars[4].transform.yaw-f.cars[1].transform.yaw,90),"the two diagonals cross at ninety degrees despite later player facing")
 end)
 
 scenario("destroyed actors awaiting garbage collection do not cause false quarantine",function()
     local f=fixture({defer_gc=true});check(f.start(),"deferred-GC batch starts")
-    f.begin_driving();f.tick(2.5)
+    f.begin_driving();f.tick(1.25)
     local removed=true
     for _,a in ipairs(f.actors) do removed=removed and a:IsValid() and a:IsActorBeingDestroyed() and a.destroy_calls==1 end
     check(removed and f.live_count()==0 and #f.adapter.stranded==0,
@@ -368,6 +574,21 @@ scenario("destroyed actors awaiting garbage collection do not cause false quaran
     check(f.begin_calls==12 and f.live_count()==6,"second set is admitted after removal and gap without waiting for GC")
     f.adapter:stop("left_run")
     check(f.live_count()==0 and #f.adapter.stranded==0,"deferred-GC cleanup leaves no live actor quarantine")
+end)
+
+scenario("garbage actors with default ProcessEvent returns are removed without quarantine",function()
+    local f=fixture({defer_gc=true,refuse_destroyed_events=true});check(f.start(),"garbage actor batch starts")
+    f.begin_driving();f.tick(1.25)
+    local removed=true
+    for _,a in ipairs(f.actors) do
+        removed=removed and a:IsValid() and not a:IsActorBeingDestroyed() and a._garbage and a.destroy_calls==1
+    end
+    check(removed and f.live_count()==0 and #f.adapter.stranded==0 and f.validity_calls>0,
+        "live library validity rejects garbage actors even when their destruction method returns default false")
+    f.tick(1)
+    check(f.begin_calls==12 and f.live_count()==6,"second set follows native removal without waiting for UObject garbage collection")
+    f.adapter:stop("left_run")
+    check(f.live_count()==0 and #f.adapter.stranded==0,"default actor method results do not create false survivors")
 end)
 
 scenario("each set independently receives two seconds of warning and half-second red",function()
@@ -387,7 +608,7 @@ scenario("each set independently receives two seconds of warning and half-second
         f.tick(0.01)
         check(f.native_starts==set*3 and approx(f.cars[first].starts[1]-loaded_at,2)
             and approx(f.cars[first].starts[1]-red_at,0.5),"set "..set.." starts only after both warning durations")
-        local reason=f.tick(2.5)
+        local reason=f.tick(1.25)
         if set==1 then check(reason==nil and f.live_count()==0,"first set is fully removed before next warning");f.tick(1)
         else check(reason=="native_finished","second fully warned set completes batch") end
     end
@@ -409,8 +630,11 @@ end)
 
 for _,sample in ipairs({{value=true,sets=1,cars=1},{value=false,sets=2,cars=3},{value="true",sets=2,cars=3},{value=1,sets=2,cars=3}}) do
     scenario("strict probe flag "..tostring(sample.value).." "..type(sample.value),function()
-        local f=fixture(); local ok,sets=f.start(sample.value)
+        local f=fixture({yaw=77}); local ok,sets=f.start(sample.value)
         check(ok and sets==sample.sets and #f.cars==sample.cars and #f.warnings==sample.cars,"only boolean true selects the single-car probe")
+        local expected_yaw=sample.value==true and 77 or 32
+        check(approx(f.cars[1].transform.yaw,expected_yaw) and approx(f.warnings[1].transform.yaw,expected_yaw),
+            "single probe retains facing while normal batches begin on the first diagonal")
         f.adapter:stop("test cleanup")
     end)
 end
@@ -460,7 +684,7 @@ scenario("ignored destruction cannot allow second set",function()
     local options={};local f=fixture(options)
     check(f.start(),"survivor batch starts")
     f.begin_driving();options.destroy_ignored=f.warnings[2].ordinal
-    check(f.tick(2.5)=="cleanup_failed","silent native destroy failure aborts batch")
+    check(f.tick(1.25)=="cleanup_failed","silent native destroy failure aborts batch")
     check(f.begin_calls==6 and #f.adapter.stranded==1 and not f.adapter.active,"no second set exists while a first-set warning survives")
     f.advance(2);local ok,reason=f.start()
     check(not ok and reason=="busy" and f.begin_calls==6,"survivor temporarily blocks new batches without consuming another item")
@@ -479,7 +703,7 @@ end)
 
 scenario("second-set partial setup failure removes its new actors",function()
     local options={};local f=fixture(options);check(f.start(),"second-set failure batch starts")
-    f.begin_driving();f.tick(2.5);options.finish_fails=8
+    f.begin_driving();f.tick(1.25);options.finish_fails=8
     check(f.tick(1)=="runtime_failed" and f.live_count()==0 and not f.adapter.active,
         "failure after first set completion rolls back only newly owned second-set actors")
     check(#f.notices==1 and f.native_starts==3,"failed second set is neither announced nor launched")
@@ -500,14 +724,14 @@ scenario("init, set and batch caps use bounded game time",function()
     f.state.bWaveClearedRequested=true
     check(f.tick(12)=="set_expired" and f.live_count()==0,"wave downtime cannot preserve one set indefinitely")
     f=fixture();check(f.start(),"batch cap starts")
-    f.begin_driving();f.tick(2.5);f.state.bWaveClearedRequested=true
+    f.begin_driving();f.tick(1.25);f.state.bWaveClearedRequested=true
     f.time=140
     check(f.tick()=="batch_expired" and not f.adapter.active and f.live_count()==0,"between-set downtime cannot outlive whole-batch cap")
 end)
 
 scenario("native movement that does not stop is bounded",function()
     local f=fixture({movement_stuck=true});check(f.start(true),"stuck movement probe starts")
-    f.begin_driving();f.tick(3.49)
+    f.begin_driving();f.tick(2.24)
     check(f.live_count()==2,"running native movement is retained through its grace interval")
     check(f.tick(0.01)=="native_finished" and f.live_count()==0,"movement beyond native duration plus grace is forcibly cleaned")
 end)
@@ -561,7 +785,7 @@ scenario("downtime restarts full warning and postpones second set",function()
     check(f.native_starts==0 and not f.warnings[1].bNearHitOn,"wave downtime cancels imminent launch and restores early warning")
     f.state.bWaveClearedRequested=false;f.tick();f.tick(1.49)
     check(f.native_starts==0,"resumed combat receives a fresh full warning")
-    f.tick(0.01);f.tick(0.5);f.tick(2.5)
+    f.tick(0.01);f.tick(0.5);f.tick(1.25)
     f.player.CharacterMovement.MovementMode=3;f.tick(1)
     check(f.begin_calls==6,"second set waits while player is airborne")
     f.player.CharacterMovement.MovementMode=1;f.state.bWaveClearedRequested=true;f.tick()
@@ -586,7 +810,7 @@ for _,stage in ipairs({"warning","between"}) do
     for _,change in ipairs({"run","player","state","world","invalid_player","invalid_state"}) do
         scenario(stage.." identity transition "..change,function()
             local f=fixture();check(f.start(),"transition scenario starts")
-            if stage=="between" then f.begin_driving();f.tick(2.5) end
+            if stage=="between" then f.begin_driving();f.tick(1.25) end
             local p,state,in_run=f.player,f.state,true
             if change=="run" then in_run=false
             elseif change=="player" then p=object("replacement player")

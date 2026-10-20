@@ -79,7 +79,8 @@ ITEM_DESCRIPTIONS = {
     BLACKOUT_TRAP: "The screen goes almost completely dark (98%) for a while.",
     METEOR_TRAP: "Experimental: one trap rolls 1–5 Aurora meteors, arriving one at a time with warnings and native remnants. "
                  "Each targets where you stood when it launched. Off by default; update the game mod and APWorld together.",
-    PROPHET_CAR_TRAP: "Experimental: two sets of three Prophet cars; the second waits until the first is gone. "
-                      "Intended to damage you and enemies through native behavior; not yet verified in live Arcade. "
+    PROPHET_CAR_TRAP: "Experimental: two sets of three Prophet cars form an X around your starting position, "
+                      "one diagonal at a time. Each has a two-second warning; the second waits until the first is gone. "
+                      "Native cars damage you and enemies. "
                       "Off by default; update the game mod and APWorld together.",
 }

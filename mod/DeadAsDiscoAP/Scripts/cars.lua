@@ -4,14 +4,25 @@ local Cars = {}
 local BASE = "/Game/LevelPrototyping/Prototype_Blueprints/"
 local CAR = BASE .. "BP_Prophet_Highway_Car.BP_Prophet_Highway_Car_C"
 local WARNING = BASE .. "BP_CarWarningIndicator.BP_CarWarningIndicator_C"
-local SPEED, DISTANCE, WARN_TIME, NEAR_TIME = 1600, 4000, 2, 0.5
+local SPEED, DISTANCE, WARN_TIME, NEAR_TIME = 3200, 4000, 2, 0.5
 local INIT_LIMIT, SET_LIMIT, LIFE_LIMIT, BATCH_LIMIT, SET_GAP = 2, 12, 14, 40, 1
 local ROAD = {"Arrow_01", "Arrow_02", "Arrow_03", "Arrow_04", "Arrow_05", "Border_01", "Border_02"}
 
 local function valid(o) return o ~= nil and o:IsValid() end
--- UE4SS's IsValid can retain a destroyed UObject until GC. Native destruction
--- unregisters actor components/ticks synchronously; do not mistake that memory for a live car.
-local function alive(actor) return valid(actor) and not actor:IsActorBeingDestroyed() end
+local validity_lib, validity_fn
+local function alive(actor)
+    if not valid(actor) then return false end
+    if not valid(validity_lib) then validity_lib = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary") end
+    if not valid(validity_fn) then validity_fn = validity_lib:GetPropertyValue("IsValid") end
+    assert(valid(validity_lib) and valid(validity_fn), "native validity check unavailable")
+    -- UE4SS wrappers can outlive native destruction. ProcessEvent on a destroyed
+    -- actor may return default false even for IsActorBeingDestroyed; call the live CDO.
+    -- GetPropertyValue returns the bound native function instead of UE4SS's own
+    -- IsValid member. Supply its receiver just as an ordinary colon call would.
+    local result = validity_fn(validity_lib, actor)
+    assert(type(result) == "boolean", "native validity returned a non-boolean")
+    return result
+end
 local function address(o) return valid(o) and o:GetAddress() or nil end
 local function fail(reason, detail) error({reason = reason, detail = detail}) end
 local function finite(n) return type(n) == "number" and n == n and math.abs(n) < 1e9 end
@@ -50,8 +61,13 @@ end
 local function transform(location, yaw, scale)
     return mathlib():MakeTransform(location, {Pitch = 0, Yaw = yaw, Roll = 0}, scale or {X=1,Y=1,Z=1})
 end
+local function actor_scale(actor)
+    local scale = xyz(actor:GetActorScale3D())
+    assert(scale.X > 0 and scale.Y > 0 and scale.Z > 0, "native actor scale must be positive")
+    return scale
+end
 local function place(actor, location, yaw, scale)
-    assert(actor:K2_SetActorTransform(transform(location, yaw, scale), false, {}, true), "cannot position native actor")
+    assert(actor:K2_SetActorTransform(transform(location, yaw, scale or actor_scale(actor)), false, {}, true), "cannot position native actor")
 end
 local function grounded(p)
     if not valid(p) then return false, "not_in_run" end
@@ -68,7 +84,9 @@ function Cars.new(log)
     local function cleanup(actors)
         local remaining = {}
         for _, actor in ipairs(actors) do
-            if alive(actor) then
+            local checked,live = pcall(alive,actor)
+            if not checked then log("cars cleanup validity check failed: " .. tostring(live)); live=valid(actor) end
+            if live then
                 -- Separate calls: one unavailable native method must not prevent destruction.
                 for _, action in ipairs({
                     function() actor:SetActorEnableCollision(false) end,
@@ -78,7 +96,8 @@ function Cars.new(log)
                     local ok, err = pcall(action)
                     if not ok then log("cars cleanup: " .. tostring(err)) end
                 end
-                if alive(actor) then remaining[#remaining+1] = actor end
+                local checked_after,live_after = pcall(alive,actor)
+                if not checked_after or live_after then remaining[#remaining+1] = actor end
             end
         end
         return remaining
@@ -108,6 +127,7 @@ function Cars.new(log)
         if not valid(actor) then fail("spawn_blocked", "native actor spawn blocked") end
         s.owned[#s.owned+1] = actor -- track before any further native call can fail
         actor:SetActorEnableCollision(false)
+        actor.InitialLifeSpan = LIFE_LIMIT
         if is_car then
             actor.ShouldLoop, actor["ResetPositionOnEnd?"] = false, false
             actor.Vector, actor.Speed, actor.LoopDistance = {X=1,Y=0,Z=0}, SPEED, DISTANCE
@@ -119,7 +139,6 @@ function Cars.new(log)
             actor.BP_CarLaneManager = nil
         end
         statics():FinishSpawningActor(actor, t, 1)
-        assert(alive(actor), "native actor disappeared during initialization")
         if is_car then
             -- Invalid StartTag makes BeginPlay activate. Freeze before the next game frame.
             actor.IsMoveActive, actor.bPassedWarningEnd = false, true
@@ -127,6 +146,7 @@ function Cars.new(log)
         actor:SetActorEnableCollision(false)
         actor:SetActorHiddenInGame(false)
         actor:SetLifeSpan(LIFE_LIMIT)
+        assert(alive(actor), "native actor disappeared during initialization")
         assert(actor:GetActorEnableCollision() == false, "warning actor still has collision")
         return actor
     end
@@ -174,6 +194,8 @@ function Cars.new(log)
             and finite(car.DamageToEnemy) and car.DamageToEnemy > 0, "native car damage is not configured")
         log(string.format("cars native footprint: half-width=%.1f half-length=%.1f; damage player=%g enemies=%g",
             geometry.half_width, geometry.half_length, car.DamageToPlayer, car.DamageToEnemy))
+        local scale = actor_scale(car)
+        log(string.format("cars native actor scale: %.3f,%.3f,%.3f",scale.X,scale.Y,scale.Z))
         return geometry
     end
 
@@ -211,12 +233,34 @@ function Cars.new(log)
         assert(finite(sx) and finite(sy) and sx > 0.01 and sy > 0.01 and sx < 100 and sy < 100,
             "native warning cannot fit the route")
         local pos = xyz(indicator:K2_GetActorLocation())
+        local original_scale = actor_scale(indicator)
         local offset = rotate({X=((lo.X+hi.X)/2-pos.X)*sx, Y=((lo.Y+hi.Y)/2-pos.Y)*sy, Z=lo.Z-pos.Z}, yaw)
-        place(indicator, {X=center.X-offset.X,Y=center.Y-offset.Y,Z=center.Z-offset.Z+3}, yaw, {X=sx,Y=sy,Z=1})
+        -- FinishSpawning preserves the native root scale (3x in the live warning).
+        -- Ratios derived from its measured bounds must multiply that authored scale.
+        place(indicator, {X=center.X-offset.X,Y=center.Y-offset.Y,Z=center.Z-offset.Z+3}, yaw,
+            {X=original_scale.X*sx,Y=original_scale.Y*sy,Z=original_scale.Z})
         local fitted_lo,fitted_hi = road_bounds(indicator,center,yaw)
-        assert(math.abs(fitted_lo.X+length/2)<1 and math.abs(fitted_hi.X-length/2)<1
+        local fits = math.abs(fitted_lo.X+length/2)<1 and math.abs(fitted_hi.X-length/2)<1
             and math.abs(fitted_lo.Y+width/2)<1 and math.abs(fitted_hi.Y-width/2)<1
-            and math.abs(fitted_lo.Z-3)<1, "native warning does not follow the fitted route")
+            and math.abs(fitted_lo.Z-3)<1
+        if not fits then
+            log(string.format("cars warning fit: yaw=%.3f original=(%.3f,%.3f,%.3f)-(%.3f,%.3f,%.3f) scale=(%.6f,%.6f,1) expected=%.3fx%.3f actual=(%.3f,%.3f,%.3f)-(%.3f,%.3f,%.3f)",
+                yaw,lo.X,lo.Y,lo.Z,hi.X,hi.Y,hi.Z,sx,sy,length,width,
+                fitted_lo.X,fitted_lo.Y,fitted_lo.Z,fitted_hi.X,fitted_hi.Y,fitted_hi.Z))
+            local ok, why = pcall(function()
+                for _, name in ipairs(ROAD) do
+                    local component = indicator[name]
+                    local loc, scale, rot = component.RelativeLocation,component.RelativeScale3D,component.RelativeRotation
+                    log(string.format("cars warning %s: relative=(%.3f,%.3f,%.3f) scale=(%.3f,%.3f,%.3f) rotation=(%.3f,%.3f,%.3f) absolute=%s/%s/%s",
+                        name,loc.X,loc.Y,loc.Z,scale.X,scale.Y,scale.Z,rot.Pitch,rot.Yaw,rot.Roll,
+                        tostring(component.bAbsoluteLocation),tostring(component.bAbsoluteRotation),tostring(component.bAbsoluteScale)))
+                end
+            end)
+            if not ok then log("cars warning inspection: " .. tostring(why)) end
+        end
+        assert(fits, "native warning does not follow the fitted route")
+        log(string.format("cars warning fitted: original scale=%.3f,%.3f,%.3f route=%.1fx%.1f yaw=%.1f",
+            original_scale.X,original_scale.Y,original_scale.Z,length,width,yaw))
         assert(valid(indicator.TrainArrowLeft) and valid(indicator.BorderLeftMaterial), "native warning materials unavailable")
     end
 
@@ -233,10 +277,11 @@ function Cars.new(log)
 
     local function prepare_set(s, p, now)
         local car_class, warning_class = load_class(CAR), load_class(WARNING)
-        local anchor = xyz(p:K2_GetActorLocation())
-        anchor.Z = anchor.Z - p.CapsuleComponent:GetScaledCapsuleHalfHeight()
+        local anchor = s.anchor
         s.records, s.owned = {}, {}
         s.set_index = s.set_index + 1
+        -- Both diagonals cross the original center, even if the player moves away.
+        s.yaw = s.facing + (s.probe and 0 or (s.set_index == 1 and -45 or 45))
         s.set_started, s.phase = now, "preparing"
         s.warn_until, s.near = nil, false -- each set gets its own complete warning
         local half_width, half_length = 0, 0
@@ -261,8 +306,8 @@ function Cars.new(log)
             assert(record.warning.bEarlyWarningOn, "native early warning did not activate")
             frozen(record)
         end
-        log(string.format("cars set %d/%d prepared: %d lanes; yaw=%.1f width=%.1f length=%.1f",
-            s.set_index,s.sets,s.per_set,s.yaw,width,length))
+        log(string.format("cars set %d/%d prepared: %d lanes; yaw=%.1f width=%.1f length=%.1f center=%.1f,%.1f,%.1f",
+            s.set_index,s.sets,s.per_set,s.yaw,width,length,anchor.X,anchor.Y,anchor.Z))
         if s.on_set then
             local ok, err = pcall(s.on_set, s.set_index, s.sets)
             if not ok then log("cars popup callback: " .. tostring(err)) end
@@ -273,15 +318,20 @@ function Cars.new(log)
         local ready, reason = self:ready(p)
         if not ready then return false, reason end
         if not valid(state) or state.bWaveClearedRequested then return false, "downtime" end
-        local s = {owned={}, records={}, set_index=0, sets=probe == true and 1 or 2,
+        local s = {owned={}, records={}, set_index=0, probe=probe == true, sets=probe == true and 1 or 2,
             per_set=probe == true and 1 or 3, on_set=on_set,
             player=address(p), state=address(state), world=address(p:GetWorld())}
         self.active = s
         local ok, err = pcall(function()
+            -- Validate the native call on known inputs before owning any spawned actors.
+            assert(alive(statics()) and validity_fn(validity_lib,nil) == false,
+                "native validity preflight failed")
             local now = statics():GetTimeSeconds(p)
             s.ends_at = now+BATCH_LIMIT
-            s.yaw = p:K2_GetActorRotation().Yaw
-            assert(finite(s.yaw), "invalid player facing")
+            s.facing = p:K2_GetActorRotation().Yaw
+            assert(finite(s.facing), "invalid player facing")
+            s.anchor = xyz(p:K2_GetActorLocation())
+            s.anchor.Z = s.anchor.Z - p.CapsuleComponent:GetScaledCapsuleHalfHeight()
             prepare_set(s,p,now)
         end)
         if not ok then

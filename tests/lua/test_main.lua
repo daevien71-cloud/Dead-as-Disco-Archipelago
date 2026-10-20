@@ -467,8 +467,8 @@ hooks[GS .. ":ReinitDiscoState"](param(state))
 state.round = 1
 hooks[GS .. ":AdvanceRound"](param(state))
 tick(4)
-check(read_status().version == "0.3.0" and read_status().effects[7] == "cars" and read_status().cars_ready,
-    "cars capability and readiness advertised in version 0.3.0")
+check(read_status().version == "0.3.1" and read_status().effects[7] == "cars" and read_status().cars_ready,
+    "cars capability and readiness advertised in version 0.3.1")
 for _, reason in ipairs({"paused", "airborne"}) do
     fake_cars.ready_reason = reason
     command({type = "effect", effect = "cars"})

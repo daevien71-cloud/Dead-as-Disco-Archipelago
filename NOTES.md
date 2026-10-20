@@ -3,6 +3,54 @@
 Dated decisions, findings and research facts. For the current state, conventions and next steps, start with
 [AGENTS.md](AGENTS.md).
 
+## Prophet car live bring-up (2026-10-19)
+
+- v0.3.1 fixes the v0.3.0 bring-up issues below. The owner confirmed the corrected single car worked
+  perfectly, requested twice the driving speed, then confirmed both sets and damage to player and
+  enemies at 3,200 units/second. Each rush took about 1.3 seconds in the log. Set one was fully
+  removed before set two prepared, and final cleanup reported zero survivors. Exact health deltas
+  were not measured; native configured damage remains 10 player / 1,000 enemy.
+- The owner subsequently requested crossing sets. Both sets now retain the initial grounded center
+  and facing, with first-set yaw facing minus 45 degrees and second-set yaw facing plus 45 degrees.
+  Moving or turning cannot move the crossing. Three parallel cars run on each diagonal, separately;
+  each set retains the full warning. The single-car probe keeps the player's original facing.
+  Claude agreed with this small placement change and approved the final code; no disagreements or
+  user-only design questions remain. Final installed X/AP validation is pending below.
+- Current regression checks: 88 car scenarios / 320 checks, 136 main checks, Lua syntax and diff
+  whitespace checks pass. Geometry tests cover the fixed crossing despite between-set player XYZ
+  and facing changes, native 3x warning scale, native transform composition and deferred destruction.
+- All 84 APWorld/tracker/bridge tests also pass. Rebuilt v0.3.1's release zip and root APWorld and
+  verified every archived file against source and both archives' CRCs. Earlier v0.2.0 and v0.3.0
+  release zips remain in dist. The installed APWorld now matches v0.3.1; the former file is backed up.
+- Removed the ignored development loader from the installed game. All four installed Lua modules
+  match reviewed production source, with main advertising v0.3.1. Manual-test logs and the replaced
+  main/loader are preserved under ignored `playtest/car-final-install-backup/`.
+- The owner installed v0.3.0 and tried `/testeffect car`. Native assets loaded, but the warning fit
+  assertion cancelled before activation. Live car footprint: half-width 154.1, half-length 431.2;
+  authored damage: player 10, enemy 1000. These are configuration reads, not proof of damage dealt.
+- The measured warning was exactly one-third of the requested dimensions. Native road components
+  all had zero relative rotation and no absolute transform flags. FinishSpawning retained the warning
+  actor's authored scale; fitting had replaced it with relative ratios as absolute scales. The fix
+  multiplies the original actor scale by those ratios and preserves scale when placing cars. The
+  final corner check stays enabled. Claude agreed; individual mesh reconstruction was unnecessary.
+- UE4SS wrapper validity can remain true after native destruction. Calling `IsActorBeingDestroyed`
+  on that garbage actor is also unreliable: ProcessEvent rejects the call and can return default
+  false. Use the live KismetSystemLibrary CDO's native validity function, fetched with
+  `bound = lib:GetPropertyValue("IsValid")`, called as `bound(lib, actor)`. This avoids the UE4SS
+  `IsValid` member collision. `lib:CallFunction(StaticFindObject(function_path), actor)` failed live
+  with a function/context binding error and is not used. The bound call passed live preflight and
+  correctly reported zero surviving actors after a cancelled probe.
+- Native validity is checked with known true/false inputs before any spawn, with strict boolean
+  results. Cleanup still attempts every owned actor if its validity query throws, and quarantines
+  uncertain survivors. InitialLifeSpan is set before FinishSpawning so setup errors remain bounded.
+- Three cars remained from the intermediate binding diagnostic, which failed before old cleanup
+  could run; the owner's screenshot showed them behind the crowd. A fresh game launch cleared this
+  test session. They were not successful trap activations. Future setup failures now retain cleanup
+  attempts and the lifespan fallback.
+- Test mocks now model native FTransform child rotation/scale composition, authored 3x warning scale,
+  deferred garbage whose actor methods return defaults, and the bound native validity function.
+  Unsupported rotated meshes or scaled movement parents still fail closed.
+
 ## Prophet Car Trap candidate (2026-10-19)
 
 - The owner requested Prophet's rushing highway cars: two sets of three, with set two only after set

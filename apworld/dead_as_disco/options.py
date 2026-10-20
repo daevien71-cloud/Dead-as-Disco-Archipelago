@@ -115,10 +115,13 @@ class EnabledTraps(OptionSet):
     Enemy kills count toward your usual kill checks. Dying to a meteor uses your normal DeathLink send chance,
     with no extra DeathLink roll or message.
 
-    **Prophet Car Trap (experimental, off by default):** two sets of three native Prophet cars. The second
-    waits until the first set is gone. Both sets use one item and their own time limits, separate from Effect
-    Duration. Player and enemy damage are intended but not yet verified in live Arcade. Native kills and deaths
-    use the usual kill checks and DeathLink chance. Update both the game mod and APWorld before adding it.
+    **Prophet Car Trap (experimental, off by default):** two sets of three native Prophet cars form an X,
+    one diagonal at a time, around your starting position and facing. Each set warns for two seconds, then
+    rushes for roughly 1.25 seconds. The second waits until the first cars and warnings are gone, plus a
+    one-second gap. Both sets use one item and their own time limits, separate from Effect Duration.
+    Native player and enemy damage passed live testing.
+    Native kills and deaths use the usual kill checks and DeathLink chance. Update both the game mod and
+    APWorld before adding it. Open, flat arenas are recommended while route and transition tests continue.
     """
     display_name = "Enabled Traps"
     valid_keys = frozenset(TRAPS)

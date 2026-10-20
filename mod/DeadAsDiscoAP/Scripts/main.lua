@@ -6,7 +6,7 @@
 --   Ctrl+F5 slow-mo  Ctrl+F6 fast-forward  Ctrl+F7 molasses  Ctrl+F8 blackout
 --   Ctrl+F9 disco fever  Ctrl+F10 kill yourself (a real death: it goes out over DeathLink)
 
-local VERSION = "0.3.0"
+local VERSION = "0.3.1"
 local TEST_HOTKEYS = false -- off for real sessions; the client's /testeffect and /testkill still work
 
 local GAME_STATE_CLASS = "BP_PagodaGameState_InfiniteDisco_C"

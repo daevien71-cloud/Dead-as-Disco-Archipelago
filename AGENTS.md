@@ -114,30 +114,38 @@ meteor items queued. See `docs/meteor-research.md` for exact hook contracts and 
 - **Last fix:** joining a new multiworld no longer counts kills/waves left over in the event log from earlier
   play.
 
-v0.3.0 is an **offline Prophet Car Trap candidate**, on `codex/prophet-car-trap` from the live-tested
-meteor commit `c8a1e54`. The installed game and APWorld still match v0.2.0. Do not confuse offline
-contract tests with live car proof. Car item 814200106 is off by default, uses two sequential sets of
-three native highway cars, and shares the native effect slot with meteors. `/testeffect car` probes
-one car; `/testeffect cars` requests both sets. Start with the probe in `docs/cars.md`.
+v0.3.1 fixes the **experimental Prophet Car Trap**, on `codex/prophet-car-trap` from the live-tested
+meteor commit `c8a1e54`. Live manual testing confirmed readable warnings, two sequential sets of
+three cars at the faster 3,200-unit/second speed, native player/enemy damage, and zero survivors after
+cleanup. Item 814200106 remains off by default and shares the native effect slot with meteors.
+The owner then requested an X: both sets now share the initial grounded center, using initial facing
+minus 45 degrees then plus 45 degrees. This final geometry has offline proof and awaits installed
+AP validation. `/testeffect car` retains one forward-facing car; `/testeffect cars` requests both sets.
+The installed mod now matches production v0.3.1 source; the temporary hotloader has been removed.
+The installed APWorld also matches v0.3.1; existing v0.3.0 clients remain compatible.
+Follow `docs/cars.md` for remaining live checks.
 
 `cars.lua` reuses native warning/movement/damage. It measures geometry, freezes collision through
 the warning, resets timing per set, preserves a half-second red warning even after a delayed tick,
-and destroys every owned car and warning before set two. Native actor destruction is checked with
-`IsActorBeingDestroyed` as well as UE4SS validity; UObject memory can remain valid until GC.
+and destroys every owned car and warning before set two. Preserve the native warning actor's 3x
+authored scale when applying measured fit ratios. Native destruction uses the live KismetSystemLibrary
+CDO's bound function (`lib:GetPropertyValue("IsValid")`, called as `bound(lib, actor)`). UE4SS wrapper
+validity can outlive native destruction, and ProcessEvent on garbage actors can return default false
+even for `IsActorBeingDestroyed`. Preflight validity before spawning; quarantine uncertain cleanup.
 The adapter has no wall/terrain trace. Open, flat arenas come first. See `docs/cars-research.md`.
 
 Saved keys `pending_meteor`, `meteor_start_failures`, and `meteor_retry_at` retain their v0.2.0 names
 but now represent the single native-effect slot for either meteor or cars. Preserve this compatibility.
 Manual probes are isolated by command ID and cannot consume or clear pending AP items.
 
-Offline validation: 84 Python unit tests, 136 main Lua checks, 232 car checks across 73 scenarios,
+Offline validation: 84 Python unit tests, 136 main Lua checks, 320 car checks across 88 scenarios,
 267 meteor checks across 51 scenarios, 11 real-server/fake-game E2E checks, 10 updater tests and six
 Linux installer tests passed. Release archive contents and source bytes were verified.
 
 ## Next
 
-- Install the v0.3.0 candidate only when the owner is ready to playtest. Prove one car's warning,
-  movement, floor alignment, player/enemy damage and cleanup, then the two sets and actual AP delivery.
+- Complete the final installed v0.3.1 X-pattern test through real AP delivery. The prepared, ignored
+  `playtest/Run-LiveCarTest.py --run` requires an active, unpaused run and the owner's readiness.
 - Complete car pause, downtime, menu/death/song/arena, reconnect and Linux/Proton checks in `docs/cars.md`.
 - Complete the remaining queued-batch, pause-during-flight, menu/death/song/arena, reconnect and
   Linux/Proton live checks in `docs/meteor.md`.
