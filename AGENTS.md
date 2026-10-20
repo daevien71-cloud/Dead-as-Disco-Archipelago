@@ -119,8 +119,10 @@ meteor commit `c8a1e54`. Live manual testing confirmed readable warnings, two se
 three cars at the faster 3,200-unit/second speed, native player/enemy damage, and zero survivors after
 cleanup. Item 814200106 remains off by default and shares the native effect slot with meteors.
 The owner then requested an X: both sets now share the initial grounded center, using initial facing
-minus 45 degrees then plus 45 degrees. This final geometry has offline proof and awaits installed
-AP validation. `/testeffect car` retains one forward-facing car; `/testeffect cars` requests both sets.
+minus 45 degrees then plus 45 degrees. Final installed AP delivery passed: one item ran both sets at
+yaws -18.7 / 71.3 through the same center, fully removed each set, and saved one consumption with
+no pending item or survivors. The owner confirmed the X looked perfect. `/testeffect car` retains
+one forward-facing car; `/testeffect cars` requests both sets.
 The installed mod now matches production v0.3.1 source; the temporary hotloader has been removed.
 The installed APWorld also matches v0.3.1; existing v0.3.0 clients remain compatible.
 Follow `docs/cars.md` for remaining live checks.
@@ -144,8 +146,6 @@ Linux installer tests passed. Release archive contents and source bytes were ver
 
 ## Next
 
-- Complete the final installed v0.3.1 X-pattern test through real AP delivery. The prepared, ignored
-  `playtest/Run-LiveCarTest.py --run` requires an active, unpaused run and the owner's readiness.
 - Complete car pause, downtime, menu/death/song/arena, reconnect and Linux/Proton checks in `docs/cars.md`.
 - Complete the remaining queued-batch, pause-during-flight, menu/death/song/arena, reconnect and
   Linux/Proton live checks in `docs/meteor.md`.

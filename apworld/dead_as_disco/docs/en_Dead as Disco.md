@@ -57,8 +57,8 @@ meteor batch, speed trap or Blackout waits until it ends. Accepted car traps per
 without replaying or consuming another item. An old mod without car support keeps the item queued and shows
 one update notice. Update both the game mod and APWorld before enabling `"Prophet Car Trap"`.
 
-Live tests confirmed the faster cars, both sets in the earlier parallel layout, native player/enemy damage,
-and complete cleanup. The new X layout still awaits its final installed AP test. Native configured damage
+Live tests confirmed the faster cars, both sets, native player/enemy damage, and complete cleanup.
+The final X layout passed real AP delivery with one completed item and no leftover actors. Native configured damage
 is 10 for the player and 1000 for enemies; exact health loss was not measured and normal game modifiers
 apply. Native kills use the usual kill checks, and a death uses the normal DeathLink send chance once.
 Failed startup uses the same three-attempt, three-second retry policy as meteors. Once the first set is

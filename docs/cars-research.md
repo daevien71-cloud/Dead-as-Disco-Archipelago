@@ -1,6 +1,6 @@
 # Prophet cars: native evidence and candidate design
 
-Status: **warnings, both sets, faster movement, player/enemy damage and cleanup verified in live Arcade**, 2026-10-19. The owner then requested the two sets cross in an X. That placement change passes offline geometry checks and awaits a final installed test. Broad arena and transition checks remain. See [the staged playtest guide](cars.md).
+Status: **warnings, both sets, faster movement, player/enemy damage and cleanup verified in live Arcade**, 2026-10-19. The final X pattern also passed real AP delivery in the normal installed build, with the owner's visual confirmation. Broad arena and transition checks remain. See [the staged playtest guide](cars.md).
 
 ## Native contracts
 
@@ -72,6 +72,8 @@ Only fully reflected vectors/transforms are used. Opaque target-data/filter hand
 Use the actual controlled pawn from `GameplayStatics:GetPlayerPawn(context,0)`. Earlier meteor investigation established that class scans can return a valid stale player actor; a failed test against that actor must not motivate substitute damage.
 
 ## Inspection provenance
+
+Final production X proof: set one prepared at yaw -18.7 and set two at 71.3, both centered at (621.0, -57.9, -93.4), a 90-degree difference with no center drift. The first set drove at 20:36:43.029 and was removed at 20:36:44.348; the second prepared at 20:36:45.393, drove at 20:36:47.730, and was removed at 20:36:49.016. The log reported zero surviving owned actors. One real AP item produced one start (`car_sets=2`, `car_count=6`) and one `native_finished` end, with one persisted consumption and no pending command. The user confirmed the X looked correct. Timestamps are from the October 19 game log; ignored evidence is in `playtest/live-cars-20261020-013638-UTC-f979af/`.
 
 Read-only extraction used retoc v0.1.5 and UAssetAPI 1.1.0 against exact packages in the locally installed game, with the prior meteor decoder. All **58 decoded functions across seven packages** passed bytecode roundtrip, complete-export consumption and unchanged-input checks. They cover the car, both parents, indicator, lane manager, boss car-hazards ability and hazard-damage calculation. The reader supplied no fabricated property mappings and executed no game bytecode.
 

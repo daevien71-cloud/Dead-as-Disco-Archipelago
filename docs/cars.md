@@ -2,6 +2,8 @@
 
 **Experimental, with live Arcade proof.** The owner confirmed readable warnings, both sets of three cars at the faster speed, and damage to the player and enemies. Logs confirmed each set was fully removed and the trap ended with zero surviving actors. v0.3.1 fixes the native warning's authored scale and destroyed-actor detection, and doubles driving speed while keeping the full warning time. Other arenas, transitions and Linux/Proton still need the checks below.
 
+The final installed X-pattern test also passed through real Archipelago delivery: one item ran both sets at 90° through the same center, removed all cars and warnings, and recorded one completed item. The owner confirmed the result looked correct.
+
 Prophet Car Trap is **off by default**. After testing, add `Prophet Car Trap` to `enabled_traps` when generating a multiworld. An older mod keeps received car items queued and asks for an update.
 
 One item requests **two sets of three native Prophet cars**, crossing in an X pattern. The first set runs 45° to one side of your initial facing; the second crosses it at the opposite angle. Both use the same starting center, even if you move or turn. Each set marks three parallel routes, gives a two-second warning, then sends the cars along those routes in about 1.25 seconds. Move out of the marked lanes. The second set waits until every first-set car and warning has disappeared, followed by a one-second gap. Each diagonal appears separately. The single-car probe keeps your initial facing.

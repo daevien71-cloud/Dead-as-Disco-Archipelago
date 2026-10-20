@@ -15,7 +15,15 @@ Dated decisions, findings and research facts. For the current state, conventions
   Moving or turning cannot move the crossing. Three parallel cars run on each diagonal, separately;
   each set retains the full warning. The single-car probe keeps the player's original facing.
   Claude agreed with this small placement change and approved the final code; no disagreements or
-  user-only design questions remain. Final installed X/AP validation is pending below.
+  user-only design questions remain. Final installed X/AP validation passed below.
+- Final production test passed on October 19 at 20:36 local time. One real AP Prophet Car Trap
+  reached the normal installed mod (no hotloader), ran two sets of three at yaw -18.7 and 71.3,
+  and used the same center (621.0, -57.9, -93.4). The angle difference was 90 degrees and center
+  difference zero. Set one was fully removed before set two; final survivors were zero. One start
+  and one `native_finished` end matched command 1; saved `effects_done=1`, `pending_meteor=null`,
+  retries zero. The owner reported "PERFECT!!". Both local test processes exited gracefully.
+  Evidence and bridge backups: ignored `playtest/live-cars-20261020-013638-UTC-f979af/` (UTC folder
+  date differs from local date). An independent read-only artifact audit confirmed these results.
 - Current regression checks: 88 car scenarios / 320 checks, 136 main checks, Lua syntax and diff
   whitespace checks pass. Geometry tests cover the fixed crossing despite between-set player XYZ
   and facing changes, native 3x warning scale, native transform composition and deferred destruction.

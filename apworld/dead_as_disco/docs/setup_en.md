@@ -69,7 +69,7 @@ mod is running. In the client window:
   Each set has its own two-second warning and roughly 1.25-second rush. The second waits for the first
   cars and warnings to disappear, then a one-second gap. The single-car probe follows your facing directly.
   Both commands require the updated mod and APWorld and spend no AP item. Faster cars, both earlier parallel
-  sets and native player/enemy damage passed live tests; the X layout awaits its final installed AP test.
+  sets and native player/enemy damage passed live tests. The installed X layout also passed real AP delivery.
 - `/testdeathlink`: pretend a friend died. Goes to your slot only, then rolls your receive chance like a real one.
 - `/testkill`: die right away. This is a real death, so it can go out to everyone over DeathLink.
 
